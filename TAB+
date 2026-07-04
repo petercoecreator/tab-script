@@ -1338,7 +1338,6 @@ task.spawn(function()
 		end
 	end
 end)
---------------------------novo script embaixo--
 
 --[[
     PORTAL TELEPORT - COM BOTÃO TOGGLE
