@@ -1,5 +1,6 @@
 --[[
 	CustomPlayerList.lua  (com bloqueio total do Tab nativo + LEADERSTATS)
+	+ INTEGRACAO: Animacao de Teleporte 3D (Portal Master Style) no "Teleport To"
 ]]
 
 local Players = game:GetService("Players")
@@ -8,6 +9,8 @@ local StarterGui = game:GetService("StarterGui")
 local GuiService = game:GetService("GuiService")
 local TweenService = game:GetService("TweenService")
 local SoundService = game:GetService("SoundService")
+local RunService = game:GetService("RunService")
+local Debris = game:GetService("Debris")
 
 local player = Players.LocalPlayer
 
@@ -54,8 +57,6 @@ local SHADOW_IMAGE = "rbxassetid://1316045217"
 
 local FRIEND_CHECK_INTERVAL = 6
 
--- Bloco de estatística que aparece do lado direito de cada row,
--- separado do nome/avatar por uma divisória. No card de perfil, TODOS os stats aparecem.
 local STATS_BLOCK_WIDTH = 74
 local STATS_BLOCK_BG    = Color3.fromRGB(36, 36, 48)
 local ROW_HEIGHT        = 38
@@ -73,12 +74,9 @@ local function checkIsFriend(targetPlayer)
 end
 
 -- ===================== LEADERSTATS HELPERS =====================
--- Qualquer jogo que use a pasta padrão "leaderstats" (Wins, Time, Kills, Coins, etc.)
--- vai aparecer automaticamente aqui, sem precisar editar nada manualmente.
 
 local function formatStatValue(valueObj)
 	if valueObj:IsA("IntValue") or valueObj:IsA("NumberValue") then
-		-- Se o nome sugerir tempo, formata como MM:SS
 		local lname = valueObj.Name:lower()
 		if lname:find("time") or lname:find("tempo") then
 			local total = math.floor(valueObj.Value)
@@ -90,7 +88,7 @@ local function formatStatValue(valueObj)
 	elseif valueObj:IsA("StringValue") then
 		return valueObj.Value
 	elseif valueObj:IsA("BoolValue") then
-		return valueObj.Value and "Sim" or "Não"
+		return valueObj.Value and "Sim" or "Nao"
 	end
 	return tostring(valueObj.Value)
 end
@@ -99,7 +97,6 @@ local function getLeaderstats(plr)
 	return plr:FindFirstChild("leaderstats")
 end
 
--- Pega o primeiro stat (o mais relevante) pra exibir no bloco compacto da row.
 local function getPrimaryStat(plr)
 	local ls = getLeaderstats(plr)
 	if not ls then return nil end
@@ -328,7 +325,7 @@ topHighlight.BackgroundTransparency = 0.75
 topHighlight.BorderSizePixel = 0
 topHighlight.Parent = mainFrame
 
--- ===================== TÍTULO =====================
+-- ===================== TITULO =====================
 
 local titleBar = Instance.new("Frame")
 titleBar.Name = "TitleBar"
@@ -450,7 +447,6 @@ local function createPlayerRow(plr, order)
 
 	loadAvatarThumbnail(avatar, plr.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size48x48)
 
-	-- Largura do nome encolhe se existir o bloco de stats do lado direito
 	local nameRightMargin = hasStats and (STATS_BLOCK_WIDTH + 20) or 8
 
 	local nameLabel = Instance.new("TextLabel")
@@ -471,7 +467,6 @@ local function createPlayerRow(plr, order)
 		friendStar.Parent = avatar
 	end
 
-	-- ===== BLOCO DE ESTATÍSTICA (separado do nome/avatar por uma divisória) =====
 	if hasStats then
 		local divider = Instance.new("Frame")
 		divider.Name = "StatsDivider"
@@ -528,7 +523,6 @@ local function createPlayerRow(plr, order)
 		statNameLabel.Text = primaryStat.Name:upper()
 		statNameLabel.Parent = statsBlock
 
-		-- Atualiza em tempo real quando o stat mudar
 		local conn
 		conn = primaryStat.Changed:Connect(function()
 			if statValueLabel.Parent then
@@ -605,8 +599,6 @@ Players.PlayerRemoving:Connect(function()
 	task.defer(refreshList)
 end)
 
--- Se o leaderstats aparecer/mudar depois (comum: carrega alguns segundos após o spawn),
--- a lista refaz as rows automaticamente pra já exibir os stats.
 Players.PlayerAdded:Connect(function(plr)
 	plr.ChildAdded:Connect(function(child)
 		if child.Name == "leaderstats" then
@@ -762,7 +754,7 @@ divider.BorderSizePixel = 0
 divider.ZIndex = 22
 divider.Parent = profileCard
 
--- ===== SEÇÃO DE STATS COMPLETA NO PERFIL =====
+-- ===== SECAO DE STATS COMPLETA NO PERFIL =====
 local statsSection = Instance.new("Frame")
 statsSection.Name = "StatsSection"
 statsSection.Position = UDim2.new(0, 12, 0, 66)
@@ -816,8 +808,6 @@ local function populateStatsSection(targetPlayer)
 	end
 end
 
--- O menu (Friend/Examine/Block/About) fica logo abaixo dos stats,
--- então ele é reposicionado sempre que os stats mudam de altura.
 local menuHolder = Instance.new("Frame")
 menuHolder.Size = UDim2.new(1, 0, 0, 176)
 menuHolder.BackgroundTransparency = 1
@@ -951,7 +941,7 @@ blockItem.MouseButton1Click:Connect(function()
 end)
 
 -- ======================================================
---     NOVO: ABOUT POPUP (Teleport To + Spectate)
+--     ABOUT POPUP (Teleport To + Spectate)
 -- ======================================================
 
 local aboutCloseCatcher = Instance.new("TextButton")
@@ -1091,7 +1081,6 @@ local function openAboutPopup(targetPlayer)
 	aboutCloseCatcher.Visible = true
 end
 
--- Click no About no profile card
 aboutItem.MouseButton1Click:Connect(function()
 	if not currentProfileTarget then return end
 	local target = currentProfileTarget
@@ -1099,71 +1088,211 @@ aboutItem.MouseButton1Click:Connect(function()
 	openAboutPopup(target)
 end)
 
--- Teleport To com animação
+-- ======================================================
+--     ANIMACAO DE TELEPORTE 3D (PORTAL MASTER STYLE)
+--     Integrada no botao "Teleport To" do About Popup
+-- ======================================================
+
+local TELEPORT_SOUND_ID = "rbxassetid://130812445847353"
+
+local function playTeleportSound(volume)
+	local sound = Instance.new("Sound")
+	sound.SoundId = TELEPORT_SOUND_ID
+	sound.Volume = volume or 0.9
+	sound.Parent = SoundService
+	sound:Play()
+	sound.Ended:Connect(function()
+		sound:Destroy()
+	end)
+end
+
+local function addPortalEffects(parent)
+	local attachment = Instance.new("Attachment", parent)
+	local nebula = Instance.new("ParticleEmitter", attachment)
+	nebula.Texture = "rbxassetid://6031302855"
+	nebula.Color = ColorSequence.new(Color3.fromRGB(0, 0, 0), Color3.fromRGB(0, 255, 255))
+	nebula.Lifetime = NumberRange.new(0.8, 1.2)
+	nebula.Rate = 150
+	nebula.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 5), NumberSequenceKeypoint.new(1, 0)})
+	nebula.Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0.4), NumberSequenceKeypoint.new(1, 1)})
+	nebula.Speed = NumberRange.new(2, 5)
+	nebula.RotSpeed = NumberRange.new(-50, 50)
+
+	local lightning = Instance.new("ParticleEmitter", attachment)
+	lightning.Texture = "rbxassetid://281983213"
+	lightning.Rate = 20
+	lightning.Size = NumberSequence.new(3)
+	lightning.Lifetime = NumberRange.new(0.1, 0.2)
+	lightning.Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(1, 1)})
+end
+
+local function createRealisticPortal(pos, isFlat, duration)
+	local container = Instance.new("Model", workspace)
+	local baseCF = isFlat and (pos * CFrame.Angles(math.rad(90), 0, 0)) or (pos * CFrame.Angles(0, 0, math.rad(90)))
+	local lifeTime = duration or 2.5
+
+	local core = Instance.new("Part")
+	core.Shape = Enum.PartType.Cylinder
+	core.Color = Color3.new(0, 0, 0)
+	core.Material = Enum.Material.Glass
+	core.Size = Vector3.new(0.3, 0, 0)
+	core.Anchored = true
+	core.CanCollide = false
+	core.CFrame = baseCF
+	core.Parent = container
+
+	local core2 = core:Clone()
+	core2.CFrame = core.CFrame * CFrame.new(-0.15, 0, 0)
+	core2.Parent = container
+
+	local edge = Instance.new("Part")
+	edge.Shape = Enum.PartType.Cylinder
+	edge.Color = Color3.fromRGB(0, 255, 255)
+	edge.Material = Enum.Material.Neon
+	edge.Size = Vector3.new(0.1, 0, 0)
+	edge.Anchored = true
+	edge.CanCollide = false
+	edge.CFrame = core.CFrame * CFrame.new(-0.05, 0, 0)
+	edge.Parent = container
+
+	local light = Instance.new("PointLight", edge)
+	light.Color = Color3.fromRGB(0, 255, 255)
+	light.Range = 25
+	light.Brightness = 10
+	addPortalEffects(edge)
+
+	local info = TweenInfo.new(0.6, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out)
+	TweenService:Create(core, info, {Size = Vector3.new(0.3, 8, 8)}):Play()
+	TweenService:Create(core2, info, {Size = Vector3.new(0.3, 8, 8)}):Play()
+	TweenService:Create(edge, info, {Size = Vector3.new(0.1, 8.8, 8.8)}):Play()
+
+	local conn
+	conn = RunService.Heartbeat:Connect(function()
+		if not edge or not edge.Parent then
+			conn:Disconnect()
+			return
+		end
+		edge.CFrame = edge.CFrame * CFrame.new(0, 0, 0) * CFrame.Angles(math.rad(4), 0, 0)
+		edge.Size = Vector3.new(0.1, 8.8 + math.sin(tick() * 20) * 0.2, 8.8 + math.sin(tick() * 20) * 0.2)
+	end)
+
+	task.delay(lifeTime, function()
+		if container then
+			if conn then
+				conn:Disconnect()
+			end
+			local closeInfo = TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.In)
+			TweenService:Create(core, closeInfo, {Size = Vector3.new(0.3, 0, 0)}):Play()
+			TweenService:Create(core2, closeInfo, {Size = Vector3.new(0.3, 0, 0)}):Play()
+			local t = TweenService:Create(edge, closeInfo, {Size = Vector3.new(0.1, 0, 0)})
+			t:Play()
+			t.Completed:Connect(function()
+				container:Destroy()
+			end)
+		end
+	end)
+end
+
+-- Teleport To com animacao completa de portal 3D
+local isTeleportCooldown = false
+
 teleportItem.MouseButton1Click:Connect(function()
 	if not currentAboutTarget then return end
-	
+	if isTeleportCooldown then return end
+
+	isTeleportCooldown = true
+
 	-- SALVA o target ANTES de fechar o popup
 	local target = currentAboutTarget
 	closeAboutPopup()
 
 	local targetChar = target.Character
 	local myChar = player.Character
-	if not targetChar or not myChar then return end
-	if not targetChar:FindFirstChild("HumanoidRootPart") or not myChar:FindFirstChild("HumanoidRootPart") then return end
+	if not targetChar or not myChar then
+		isTeleportCooldown = false
+		return
+	end
+	if not targetChar:FindFirstChild("HumanoidRootPart") or not myChar:FindFirstChild("HumanoidRootPart") then
+		isTeleportCooldown = false
+		return
+	end
 
-	local targetCFrame = targetChar.HumanoidRootPart.CFrame * CFrame.new(0, 0, 3)
-	local startCFrame = myChar.HumanoidRootPart.CFrame
+	local targetRoot = targetChar.HumanoidRootPart
+	local myRoot = myChar.HumanoidRootPart
 
-	-- Animação de teleporte: eleva + desaparece + teleporta + desce + aparece
-	local hrp = myChar.HumanoidRootPart
+	-- Posicao de saida: atras do alvo
+	local exitPos = targetRoot.CFrame * CFrame.new(0, 0, 3)
+	local startPos = myRoot.CFrame
 
-	-- Eleva
-	TweenService:Create(hrp, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-		CFrame = startCFrame * CFrame.new(0, 10, 0)
-	}):Play()
+	-- ===== ANIMACAO DE TELEPORTE PORTAL MASTER =====
 
-	task.wait(0.3)
+	-- 1. Cria portal de entrada (na posicao atual do jogador, em pe)
+	createRealisticPortal(startPos * CFrame.new(0, 8.5, 0), false, 2.5)
 
-	-- Fica invisível
-	local originalTransparencies = {}
-	for _, part in ipairs(myChar:GetDescendants()) do
+	-- 2. Cria portal de saida (na posicao do alvo, em pe)
+	createRealisticPortal(exitPos * CFrame.new(0, 8.5, 0), false, 2.5)
+
+	-- 3. Toca som de teleporte
+	playTeleportSound(1)
+
+	-- 4. Desintegracao do personagem (encolhe e fica invisivel)
+	local originalParts = {}
+	for _, part in pairs(myChar:GetDescendants()) do
 		if part:IsA("BasePart") then
-			originalTransparencies[part] = part.Transparency
-			part.Transparency = 1
+			originalParts[part] = {
+				Size = part.Size,
+				Trans = part.Transparency,
+				CanCollide = part.CanCollide
+			}
+			TweenService:Create(part, TweenInfo.new(0.5, Enum.EasingStyle.Quart, Enum.EasingDirection.In), {
+				Size = part.Size * Vector3.new(0.1, 10, 0.1),
+				Transparency = 1
+			}):Play()
+			part.CanCollide = false
 		end
 	end
 
-	-- Teleporta
-	hrp.CFrame = targetCFrame * CFrame.new(0, 10, 0)
+	-- 5. Aguarda animacao de desintegracao
+	task.wait(0.6)
 
+	-- 6. Teleporta para a posicao de saida
+	if targetRoot.Parent and myRoot.Parent then
+		myRoot.CFrame = exitPos
+	end
+
+	-- 7. Aguarda um frame para garantir posicao
 	task.wait(0.1)
 
-	-- Desce
-	TweenService:Create(hrp, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
-		CFrame = targetCFrame
-	}):Play()
-
-	task.wait(0.3)
-
-	-- Fica visível de novo
-	for part, orig in pairs(originalTransparencies) do
+	-- 8. Reintegracao do personagem (volta ao tamanho normal e fica visivel)
+	for part, data in pairs(originalParts) do
 		if part and part.Parent then
-			part.Transparency = orig
+			local targetTrans = (part.Name == "HumanoidRootPart") and 1 or data.Trans
+			TweenService:Create(part, TweenInfo.new(0.6, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+				Size = data.Size,
+				Transparency = targetTrans
+			}):Play()
+			task.delay(0.6, function()
+				if part and part.Parent then
+					part.CanCollide = data.CanCollide
+				end
+			end)
 		end
 	end
+
+	-- 9. Libera cooldown
+	task.delay(1.5, function()
+		isTeleportCooldown = false
+	end)
 end)
 
 -- Spectate (toggle)
 spectateItem.MouseButton1Click:Connect(function()
 	if not currentAboutTarget then return end
-	
-	-- SALVA o target ANTES de fechar o popup
+
 	local target = currentAboutTarget
 	closeAboutPopup()
 
 	if spectating then
-		-- Parar de espectar
 		spectating = false
 		spectateLabel.Text = "Spectate"
 		if spectateConnection then
@@ -1172,7 +1301,6 @@ spectateItem.MouseButton1Click:Connect(function()
 		end
 		workspace.CurrentCamera.CameraSubject = player.Character and player.Character:FindFirstChild("Humanoid")
 	else
-		-- Começar a espectar
 		spectating = true
 		spectateLabel.Text = "Unspectate"
 		local function updateCamera()
@@ -1201,7 +1329,7 @@ inspectItem.MouseButton1Click:Connect(function()
 end)
 
 -- ======================================================
---        NOTIFICAÇÃO DE STATUS DE AMIZADE
+--        NOTIFICACAO DE STATUS DE AMIZADE
 -- ======================================================
 
 local NOTIFICATION_SOUND_POSITIVE_ID = "rbxassetid://6518811702"
@@ -1274,10 +1402,10 @@ local function showFriendNotification(targetPlayer, eventType)
 	local accentColor = isPositive and Color3.fromRGB(90, 220, 130) or Color3.fromRGB(230, 110, 90)
 
 	local verb
-	if eventType == "join" then verb = " juntou-se a você!"
+	if eventType == "join" then verb = " juntou-se a voce!"
 	elseif eventType == "leave" then verb = " saiu do jogo."
-	elseif eventType == "friended" then verb = " agora é seu amigo!"
-	else verb = " não é mais seu amigo." end
+	elseif eventType == "friended" then verb = " agora e seu amigo!"
+	else verb = " nao e mais seu amigo." end
 
 	notifStroke.Color = accentColor
 	notifText.Text = targetPlayer.DisplayName .. verb
