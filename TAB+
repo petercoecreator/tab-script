@@ -816,7 +816,7 @@ local function populateStatsSection(targetPlayer)
 	end
 end
 
--- O menu (Friend/Examine/Block/Report) fica logo abaixo dos stats,
+-- O menu (Friend/Examine/Block/About) fica logo abaixo dos stats,
 -- então ele é reposicionado sempre que os stats mudam de altura.
 local menuHolder = Instance.new("Frame")
 menuHolder.Size = UDim2.new(1, 0, 0, 176)
@@ -878,7 +878,7 @@ end
 local friendItem, friendLabel = makeMenuItem("friend", "Friend Request", 1)
 local inspectItem = makeMenuItem("examine", "Examine Avatar", 2)
 local blockItem = makeMenuItem("block", "Block", 3)
-local reportItem = makeMenuItem("report", "Report Abuse", 4)
+local aboutItem = makeMenuItem("report", "About", 4)
 
 local currentProfileTarget = nil
 
@@ -950,12 +950,245 @@ blockItem.MouseButton1Click:Connect(function()
 	closeProfilePopup()
 end)
 
-reportItem.MouseButton1Click:Connect(function()
-	if not currentProfileTarget then return end
-	pcall(function()
-		StarterGui:SetCore("PromptReportAbuse", currentProfileTarget)
+-- ======================================================
+--     NOVO: ABOUT POPUP (Teleport To + Spectate)
+-- ======================================================
+
+local aboutCloseCatcher = Instance.new("TextButton")
+aboutCloseCatcher.Name = "AboutCloseCatcher"
+aboutCloseCatcher.Size = UDim2.new(1, 0, 1, 0)
+aboutCloseCatcher.BackgroundTransparency = 1
+aboutCloseCatcher.Text = ""
+aboutCloseCatcher.Visible = false
+aboutCloseCatcher.ZIndex = 24
+aboutCloseCatcher.Parent = screenGui
+
+local aboutPopup = Instance.new("Frame")
+aboutPopup.Name = "AboutPopup"
+aboutPopup.AnchorPoint = Vector2.new(1, 0)
+aboutPopup.Size = UDim2.new(0, 230, 0, 140)
+aboutPopup.BackgroundColor3 = BG_COLOR_TOP
+aboutPopup.Visible = false
+aboutPopup.ZIndex = 25
+aboutPopup.Parent = screenGui
+
+local aboutCorner = Instance.new("UICorner")
+aboutCorner.CornerRadius = UDim.new(0, 12)
+aboutCorner.Parent = aboutPopup
+
+local aboutGradient = Instance.new("UIGradient")
+aboutGradient.Color = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, BG_COLOR_TOP),
+	ColorSequenceKeypoint.new(1, BG_COLOR_BOTTOM),
+})
+aboutGradient.Rotation = 90
+aboutGradient.Parent = aboutPopup
+
+local aboutStroke = Instance.new("UIStroke")
+aboutStroke.Color = ACCENT_COLOR
+aboutStroke.Thickness = 1.5
+aboutStroke.Transparency = 0.5
+aboutStroke.Parent = aboutPopup
+
+local aboutTitle = Instance.new("TextLabel")
+aboutTitle.Size = UDim2.new(1, -24, 0, 34)
+aboutTitle.Position = UDim2.new(0, 12, 0, 4)
+aboutTitle.BackgroundTransparency = 1
+aboutTitle.Font = Enum.Font.GothamBold
+aboutTitle.TextSize = 15
+aboutTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+aboutTitle.TextXAlignment = Enum.TextXAlignment.Left
+aboutTitle.Text = "About"
+aboutTitle.ZIndex = 26
+aboutTitle.Parent = aboutPopup
+
+local aboutDivider = Instance.new("Frame")
+aboutDivider.Position = UDim2.new(0, 0, 0, 38)
+aboutDivider.Size = UDim2.new(1, 0, 0, 1)
+aboutDivider.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+aboutDivider.BackgroundTransparency = 0.9
+aboutDivider.BorderSizePixel = 0
+aboutDivider.ZIndex = 26
+aboutDivider.Parent = aboutPopup
+
+local aboutMenuHolder = Instance.new("Frame")
+aboutMenuHolder.Size = UDim2.new(1, 0, 0, 88)
+aboutMenuHolder.Position = UDim2.new(0, 0, 0, 44)
+aboutMenuHolder.BackgroundTransparency = 1
+aboutMenuHolder.ZIndex = 26
+aboutMenuHolder.Parent = aboutPopup
+
+local aboutMenuLayout = Instance.new("UIListLayout")
+aboutMenuLayout.SortOrder = Enum.SortOrder.LayoutOrder
+aboutMenuLayout.Parent = aboutMenuHolder
+
+local function makeAboutItem(iconKind, text, order)
+	local item = Instance.new("TextButton")
+	item.Name = text
+	item.LayoutOrder = order
+	item.Size = UDim2.new(1, 0, 0, 44)
+	item.BackgroundTransparency = 1
+	item.AutoButtonColor = false
+	item.Text = ""
+	item.ZIndex = 26
+	item.Parent = aboutMenuHolder
+
+	local iconBox = buildMenuIcon(iconKind)
+	iconBox.AnchorPoint = Vector2.new(0, 0.5)
+	iconBox.Position = UDim2.new(0, 14, 0.5, 0)
+	iconBox.Parent = item
+
+	local textLabel = Instance.new("TextLabel")
+	textLabel.Position = UDim2.new(0, 46, 0, 0)
+	textLabel.Size = UDim2.new(1, -56, 1, 0)
+	textLabel.BackgroundTransparency = 1
+	textLabel.Font = Enum.Font.Gotham
+	textLabel.TextSize = 15
+	textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+	textLabel.TextXAlignment = Enum.TextXAlignment.Left
+	textLabel.Text = text
+	textLabel.ZIndex = 26
+	textLabel.Parent = item
+
+	item.MouseEnter:Connect(function()
+		TweenService:Create(item, TweenInfo.new(0.12), {BackgroundTransparency = 0, BackgroundColor3 = MENU_HOVER}):Play()
 	end)
+	item.MouseLeave:Connect(function()
+		TweenService:Create(item, TweenInfo.new(0.12), {BackgroundTransparency = 1}):Play()
+	end)
+
+	return item, textLabel
+end
+
+local teleportItem, teleportLabel = makeAboutItem("examine", "Teleport To", 1)
+local spectateItem, spectateLabel = makeAboutItem("examine", "Spectate", 2)
+
+local currentAboutTarget = nil
+local spectating = false
+local spectateConnection = nil
+
+local function closeAboutPopup()
+	aboutPopup.Visible = false
+	aboutCloseCatcher.Visible = false
+	currentAboutTarget = nil
+end
+
+aboutCloseCatcher.MouseButton1Click:Connect(closeAboutPopup)
+
+local function openAboutPopup(targetPlayer)
+	currentAboutTarget = targetPlayer
+	aboutTitle.Text = "About " .. targetPlayer.DisplayName
+
+	local rowAbsY = mainFrame.AbsolutePosition.Y + 50
+	local mainFrameAbsX = mainFrame.AbsolutePosition.X
+
+	local screenHeight = screenGui.AbsoluteSize.Y
+	local popupHeight = aboutPopup.Size.Y.Offset
+	local targetY = math.clamp(rowAbsY, 8, screenHeight - popupHeight - 8)
+
+	aboutPopup.Position = UDim2.new(0, mainFrameAbsX - 12, 0, targetY)
+	aboutPopup.Visible = true
+	aboutCloseCatcher.Visible = true
+end
+
+-- Click no About no profile card
+aboutItem.MouseButton1Click:Connect(function()
+	if not currentProfileTarget then return end
+	local target = currentProfileTarget
 	closeProfilePopup()
+	openAboutPopup(target)
+end)
+
+-- Teleport To com animação
+teleportItem.MouseButton1Click:Connect(function()
+	if not currentAboutTarget then return end
+	
+	-- SALVA o target ANTES de fechar o popup
+	local target = currentAboutTarget
+	closeAboutPopup()
+
+	local targetChar = target.Character
+	local myChar = player.Character
+	if not targetChar or not myChar then return end
+	if not targetChar:FindFirstChild("HumanoidRootPart") or not myChar:FindFirstChild("HumanoidRootPart") then return end
+
+	local targetCFrame = targetChar.HumanoidRootPart.CFrame * CFrame.new(0, 0, 3)
+	local startCFrame = myChar.HumanoidRootPart.CFrame
+
+	-- Animação de teleporte: eleva + desaparece + teleporta + desce + aparece
+	local hrp = myChar.HumanoidRootPart
+
+	-- Eleva
+	TweenService:Create(hrp, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		CFrame = startCFrame * CFrame.new(0, 10, 0)
+	}):Play()
+
+	task.wait(0.3)
+
+	-- Fica invisível
+	local originalTransparencies = {}
+	for _, part in ipairs(myChar:GetDescendants()) do
+		if part:IsA("BasePart") then
+			originalTransparencies[part] = part.Transparency
+			part.Transparency = 1
+		end
+	end
+
+	-- Teleporta
+	hrp.CFrame = targetCFrame * CFrame.new(0, 10, 0)
+
+	task.wait(0.1)
+
+	-- Desce
+	TweenService:Create(hrp, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+		CFrame = targetCFrame
+	}):Play()
+
+	task.wait(0.3)
+
+	-- Fica visível de novo
+	for part, orig in pairs(originalTransparencies) do
+		if part and part.Parent then
+			part.Transparency = orig
+		end
+	end
+end)
+
+-- Spectate (toggle)
+spectateItem.MouseButton1Click:Connect(function()
+	if not currentAboutTarget then return end
+	
+	-- SALVA o target ANTES de fechar o popup
+	local target = currentAboutTarget
+	closeAboutPopup()
+
+	if spectating then
+		-- Parar de espectar
+		spectating = false
+		spectateLabel.Text = "Spectate"
+		if spectateConnection then
+			spectateConnection:Disconnect()
+			spectateConnection = nil
+		end
+		workspace.CurrentCamera.CameraSubject = player.Character and player.Character:FindFirstChild("Humanoid")
+	else
+		-- Começar a espectar
+		spectating = true
+		spectateLabel.Text = "Unspectate"
+		local function updateCamera()
+			local targetChar = target.Character
+			if targetChar and targetChar:FindFirstChild("Humanoid") then
+				workspace.CurrentCamera.CameraSubject = targetChar.Humanoid
+			end
+		end
+		updateCamera()
+		spectateConnection = target.CharacterAdded:Connect(function()
+			if spectating then
+				task.wait(0.5)
+				updateCamera()
+			end
+		end)
+	end
 end)
 
 inspectItem.MouseButton1Click:Connect(function()
