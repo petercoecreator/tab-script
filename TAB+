@@ -1,0 +1,1107 @@
+--[[
+	CustomPlayerList.lua  (com bloqueio total do Tab nativo + LEADERSTATS)
+]]
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local StarterGui = game:GetService("StarterGui")
+local GuiService = game:GetService("GuiService")
+local TweenService = game:GetService("TweenService")
+local SoundService = game:GetService("SoundService")
+
+local player = Players.LocalPlayer
+
+-- ===================== BLOQUEIO DO TAB NATIVO =====================
+pcall(function()
+	StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.PlayerList, false)
+end)
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if gameProcessed then return end
+	if input.KeyCode == Enum.KeyCode.Tab then
+		pcall(function()
+			StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.PlayerList, false)
+		end)
+	end
+end)
+
+task.spawn(function()
+	while true do
+		pcall(function()
+			if StarterGui:GetCoreGuiEnabled(Enum.CoreGuiType.PlayerList) then
+				StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.PlayerList, false)
+			end
+		end)
+		task.wait(0.1)
+	end
+end)
+
+-- ===================== CONFIG =====================
+
+local EXPANDED_SIZE   = UDim2.new(0, 240, 0, 320)
+local MINIMIZED_SIZE  = UDim2.new(0, 240, 0, 34)
+local TWEEN_TIME      = 0.35
+
+local ACCENT_COLOR    = Color3.fromRGB(120, 170, 255)
+local BG_COLOR_TOP    = Color3.fromRGB(28, 28, 36)
+local BG_COLOR_BOTTOM = Color3.fromRGB(18, 18, 24)
+local ROW_COLOR       = Color3.fromRGB(45, 45, 56)
+local ROW_HOVER_COLOR = Color3.fromRGB(60, 65, 90)
+local MENU_HOVER      = Color3.fromRGB(45, 100, 75)
+local STATS_COLOR     = Color3.fromRGB(170, 175, 190)
+
+local SHADOW_IMAGE = "rbxassetid://1316045217"
+
+local FRIEND_CHECK_INTERVAL = 6
+
+-- Bloco de estatística que aparece do lado direito de cada row,
+-- separado do nome/avatar por uma divisória. No card de perfil, TODOS os stats aparecem.
+local STATS_BLOCK_WIDTH = 74
+local STATS_BLOCK_BG    = Color3.fromRGB(36, 36, 48)
+local ROW_HEIGHT        = 38
+local ROW_HOVER_HEIGHT  = 42
+
+local openProfilePopup
+
+local friendCache = {}
+
+local function checkIsFriend(targetPlayer)
+	local ok, isFriend = pcall(function()
+		return player:IsFriendsWith(targetPlayer.UserId)
+	end)
+	return ok and isFriend or false
+end
+
+-- ===================== LEADERSTATS HELPERS =====================
+-- Qualquer jogo que use a pasta padrão "leaderstats" (Wins, Time, Kills, Coins, etc.)
+-- vai aparecer automaticamente aqui, sem precisar editar nada manualmente.
+
+local function formatStatValue(valueObj)
+	if valueObj:IsA("IntValue") or valueObj:IsA("NumberValue") then
+		-- Se o nome sugerir tempo, formata como MM:SS
+		local lname = valueObj.Name:lower()
+		if lname:find("time") or lname:find("tempo") then
+			local total = math.floor(valueObj.Value)
+			local mins = math.floor(total / 60)
+			local secs = total % 60
+			return string.format("%02d:%02d", mins, secs)
+		end
+		return tostring(valueObj.Value)
+	elseif valueObj:IsA("StringValue") then
+		return valueObj.Value
+	elseif valueObj:IsA("BoolValue") then
+		return valueObj.Value and "Sim" or "Não"
+	end
+	return tostring(valueObj.Value)
+end
+
+local function getLeaderstats(plr)
+	return plr:FindFirstChild("leaderstats")
+end
+
+-- Pega o primeiro stat (o mais relevante) pra exibir no bloco compacto da row.
+local function getPrimaryStat(plr)
+	local ls = getLeaderstats(plr)
+	if not ls then return nil end
+	for _, child in ipairs(ls:GetChildren()) do
+		if child:IsA("ValueBase") then
+			return child
+		end
+	end
+	return nil
+end
+
+-- ===================== HELPERS =====================
+
+local function loadAvatarThumbnail(imageObject, userId, thumbnailType, thumbnailSize)
+	task.spawn(function()
+		for attempt = 1, 3 do
+			local ok, content = pcall(function()
+				return Players:GetUserThumbnailAsync(userId, thumbnailType, thumbnailSize)
+			end)
+			if ok and content and imageObject.Parent then
+				imageObject.Image = content
+				return
+			end
+			task.wait(0.5 * attempt)
+		end
+	end)
+end
+
+local function buildMenuIcon(kind)
+	local box = Instance.new("Frame")
+	box.BackgroundTransparency = 1
+	box.Size = UDim2.new(0, 24, 0, 24)
+	box.ZIndex = 22
+
+	if kind == "friend" then
+		local vBar = Instance.new("Frame")
+		vBar.AnchorPoint = Vector2.new(0.5, 0.5)
+		vBar.Position = UDim2.new(0.5, 0, 0.5, 0)
+		vBar.Size = UDim2.new(0, 3, 0, 15)
+		vBar.BackgroundColor3 = ACCENT_COLOR
+		vBar.BorderSizePixel = 0
+		vBar.ZIndex = 22
+		vBar.Parent = box
+		local vCorner = Instance.new("UICorner")
+		vCorner.CornerRadius = UDim.new(1, 0)
+		vCorner.Parent = vBar
+
+		local hBar = vBar:Clone()
+		hBar.Size = UDim2.new(0, 15, 0, 3)
+		hBar.Parent = box
+
+	elseif kind == "examine" then
+		local ring = Instance.new("Frame")
+		ring.Position = UDim2.new(0, 2, 0, 2)
+		ring.Size = UDim2.new(0, 13, 0, 13)
+		ring.BackgroundTransparency = 1
+		ring.ZIndex = 22
+		ring.Parent = box
+		local ringCorner = Instance.new("UICorner")
+		ringCorner.CornerRadius = UDim.new(1, 0)
+		ringCorner.Parent = ring
+		local ringStroke = Instance.new("UIStroke")
+		ringStroke.Thickness = 2
+		ringStroke.Color = Color3.fromRGB(230, 230, 230)
+		ringStroke.Parent = ring
+
+		local handle = Instance.new("Frame")
+		handle.AnchorPoint = Vector2.new(0.5, 0.5)
+		handle.Position = UDim2.new(0, 17, 0, 17)
+		handle.Size = UDim2.new(0, 2, 0, 9)
+		handle.Rotation = 45
+		handle.BackgroundColor3 = Color3.fromRGB(230, 230, 230)
+		handle.BorderSizePixel = 0
+		handle.ZIndex = 22
+		handle.Parent = box
+
+	elseif kind == "block" then
+		local ring = Instance.new("Frame")
+		ring.Position = UDim2.new(0, 1, 0, 1)
+		ring.Size = UDim2.new(0, 20, 0, 20)
+		ring.BackgroundTransparency = 1
+		ring.ZIndex = 22
+		ring.Parent = box
+		local ringCorner = Instance.new("UICorner")
+		ringCorner.CornerRadius = UDim.new(1, 0)
+		ringCorner.Parent = ring
+		local ringStroke = Instance.new("UIStroke")
+		ringStroke.Thickness = 2
+		ringStroke.Color = Color3.fromRGB(230, 90, 90)
+		ringStroke.Parent = ring
+
+		local diag = Instance.new("Frame")
+		diag.AnchorPoint = Vector2.new(0.5, 0.5)
+		diag.Position = UDim2.new(0.5, 0, 0.5, 0)
+		diag.Size = UDim2.new(0, 2, 0, 20)
+		diag.Rotation = 45
+		diag.BackgroundColor3 = Color3.fromRGB(230, 90, 90)
+		diag.BorderSizePixel = 0
+		diag.ZIndex = 22
+		diag.Parent = box
+
+	elseif kind == "report" then
+		local pole = Instance.new("Frame")
+		pole.Position = UDim2.new(0, 6, 0, 1)
+		pole.Size = UDim2.new(0, 2, 0, 21)
+		pole.BackgroundColor3 = Color3.fromRGB(230, 230, 230)
+		pole.BorderSizePixel = 0
+		pole.ZIndex = 22
+		pole.Parent = box
+
+		local flag = Instance.new("Frame")
+		flag.Position = UDim2.new(0, 8, 0, 2)
+		flag.Size = UDim2.new(0, 13, 0, 9)
+		flag.BackgroundColor3 = Color3.fromRGB(235, 160, 60)
+		flag.BorderSizePixel = 0
+		flag.ZIndex = 22
+		flag.Parent = box
+		local flagCorner = Instance.new("UICorner")
+		flagCorner.CornerRadius = UDim.new(0, 2)
+		flagCorner.Parent = flag
+	end
+
+	return box
+end
+
+local function buildFriendStar()
+	local badge = Instance.new("Frame")
+	badge.Name = "FriendStar"
+	badge.AnchorPoint = Vector2.new(1, 1)
+	badge.Position = UDim2.new(1, 3, 1, 3)
+	badge.Size = UDim2.new(0, 14, 0, 14)
+	badge.BackgroundColor3 = Color3.fromRGB(80, 200, 120)
+	badge.BorderSizePixel = 0
+	badge.ZIndex = 5
+	badge.Parent = nil
+
+	local badgeCorner = Instance.new("UICorner")
+	badgeCorner.CornerRadius = UDim.new(1, 0)
+	badgeCorner.Parent = badge
+
+	local ringStroke = Instance.new("UIStroke")
+	ringStroke.Thickness = 1.5
+	ringStroke.Color = BG_COLOR_TOP
+	ringStroke.Parent = badge
+
+	local checkShort = Instance.new("Frame")
+	checkShort.AnchorPoint = Vector2.new(0.5, 0.5)
+	checkShort.Position = UDim2.new(0.35, 0, 0.55, 0)
+	checkShort.Size = UDim2.new(0, 2, 0, 5)
+	checkShort.Rotation = 45
+	checkShort.BackgroundColor3 = Color3.fromRGB(20, 55, 35)
+	checkShort.BorderSizePixel = 0
+	checkShort.ZIndex = 6
+	checkShort.Parent = badge
+
+	local checkLong = Instance.new("Frame")
+	checkLong.AnchorPoint = Vector2.new(0.5, 0.5)
+	checkLong.Position = UDim2.new(0.58, 0, 0.42, 0)
+	checkLong.Size = UDim2.new(0, 2, 0, 9)
+	checkLong.Rotation = -45
+	checkLong.BackgroundColor3 = Color3.fromRGB(20, 55, 35)
+	checkLong.BorderSizePixel = 0
+	checkLong.ZIndex = 6
+	checkLong.Parent = badge
+
+	return badge
+end
+
+-- ===================== BASE GUI =====================
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "CustomPlayerList"
+screenGui.ResetOnSpawn = false
+screenGui.DisplayOrder = 100
+screenGui.IgnoreGuiInset = true
+screenGui.Parent = player:WaitForChild("PlayerGui")
+
+local shadow = Instance.new("ImageLabel")
+shadow.Name = "Shadow"
+shadow.AnchorPoint = Vector2.new(1, 0)
+shadow.Position = UDim2.new(1, 6, 0, 30)
+shadow.Size = UDim2.new(0, 260, 0, 340)
+shadow.BackgroundTransparency = 1
+shadow.Image = SHADOW_IMAGE
+shadow.ImageColor3 = Color3.new(0, 0, 0)
+shadow.ImageTransparency = 1
+shadow.ScaleType = Enum.ScaleType.Slice
+shadow.SliceCenter = Rect.new(10, 10, 118, 118)
+shadow.ZIndex = 0
+shadow.Parent = screenGui
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "PlayerListFrame"
+mainFrame.AnchorPoint = Vector2.new(1, 0)
+mainFrame.Position = UDim2.new(1, -10, 0, 10)
+mainFrame.Size = MINIMIZED_SIZE
+mainFrame.ClipsDescendants = true
+mainFrame.BackgroundColor3 = BG_COLOR_TOP
+mainFrame.BackgroundTransparency = 0.08
+mainFrame.ZIndex = 1
+mainFrame.Parent = screenGui
+
+local mainCorner = Instance.new("UICorner")
+mainCorner.CornerRadius = UDim.new(0, 12)
+mainCorner.Parent = mainFrame
+
+local bgGradient = Instance.new("UIGradient")
+bgGradient.Color = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, BG_COLOR_TOP),
+	ColorSequenceKeypoint.new(1, BG_COLOR_BOTTOM),
+})
+bgGradient.Rotation = 90
+bgGradient.Parent = mainFrame
+
+local stroke = Instance.new("UIStroke")
+stroke.Thickness = 1.5
+stroke.Color = ACCENT_COLOR
+stroke.Transparency = 0.55
+stroke.Parent = mainFrame
+
+local topHighlight = Instance.new("Frame")
+topHighlight.Name = "TopHighlight"
+topHighlight.Size = UDim2.new(1, 0, 0, 1)
+topHighlight.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+topHighlight.BackgroundTransparency = 0.75
+topHighlight.BorderSizePixel = 0
+topHighlight.Parent = mainFrame
+
+-- ===================== TÍTULO =====================
+
+local titleBar = Instance.new("Frame")
+titleBar.Name = "TitleBar"
+titleBar.Size = UDim2.new(1, 0, 0, 34)
+titleBar.BackgroundTransparency = 1
+titleBar.Parent = mainFrame
+
+local title = Instance.new("TextLabel")
+title.Name = "Title"
+title.Size = UDim2.new(1, -16, 1, 0)
+title.Position = UDim2.new(0, 12, 0, 0)
+title.BackgroundTransparency = 1
+title.Text = "JOGADORES (0)"
+title.TextColor3 = Color3.fromRGB(255, 255, 255)
+title.Font = Enum.Font.GothamBold
+title.TextSize = 14
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Parent = titleBar
+
+local titleGradient = Instance.new("UIGradient")
+titleGradient.Color = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, Color3.fromRGB(255,255,255)),
+	ColorSequenceKeypoint.new(0.5, ACCENT_COLOR),
+	ColorSequenceKeypoint.new(1, Color3.fromRGB(255,255,255)),
+})
+titleGradient.Parent = title
+
+task.spawn(function()
+	while title and title.Parent do
+		titleGradient.Offset = Vector2.new(-1, 0)
+		local tw = TweenService:Create(titleGradient, TweenInfo.new(3, Enum.EasingStyle.Linear), {Offset = Vector2.new(1, 0)})
+		tw:Play()
+		tw.Completed:Wait()
+		task.wait(2)
+	end
+end)
+
+local pulseDot = Instance.new("Frame")
+pulseDot.Name = "PulseDot"
+pulseDot.AnchorPoint = Vector2.new(1, 0.5)
+pulseDot.Position = UDim2.new(1, -12, 0.5, 0)
+pulseDot.Size = UDim2.new(0, 8, 0, 8)
+pulseDot.BackgroundColor3 = Color3.fromRGB(90, 220, 130)
+pulseDot.Parent = titleBar
+
+local pulseDotCorner = Instance.new("UICorner")
+pulseDotCorner.CornerRadius = UDim.new(1, 0)
+pulseDotCorner.Parent = pulseDot
+
+task.spawn(function()
+	while pulseDot and pulseDot.Parent do
+		local grow = TweenService:Create(pulseDot, TweenInfo.new(0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {BackgroundTransparency = 0.6})
+		grow:Play()
+		grow.Completed:Wait()
+		local shrink = TweenService:Create(pulseDot, TweenInfo.new(0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {BackgroundTransparency = 0})
+		shrink:Play()
+		shrink.Completed:Wait()
+	end
+end)
+
+-- ===================== LISTA (CONTAINER) =====================
+
+local container = Instance.new("ScrollingFrame")
+container.Name = "Container"
+container.Position = UDim2.new(0, 8, 0, 40)
+container.Size = UDim2.new(1, -16, 1, -48)
+container.BackgroundTransparency = 1
+container.BorderSizePixel = 0
+container.ScrollBarThickness = 3
+container.ScrollBarImageColor3 = ACCENT_COLOR
+container.AutomaticCanvasSize = Enum.AutomaticSize.Y
+container.CanvasSize = UDim2.new(0, 0, 0, 0)
+container.Parent = mainFrame
+
+local listLayout = Instance.new("UIListLayout")
+listLayout.Padding = UDim.new(0, 6)
+listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+listLayout.Parent = container
+
+-- ===================== ROW POR JOGADOR =====================
+
+local function createPlayerRow(plr, order)
+	local primaryStat = getPrimaryStat(plr)
+	local hasStats = primaryStat ~= nil
+
+	local row = Instance.new("TextButton")
+	row.Name = plr.Name
+	row.Text = ""
+	row.AutoButtonColor = false
+	row.LayoutOrder = order
+	row.Size = UDim2.new(1, 0, 0, ROW_HEIGHT)
+	row.BackgroundColor3 = ROW_COLOR
+	row.BackgroundTransparency = 1
+	row.ClipsDescendants = true
+	row.Parent = container
+
+	row.MouseButton1Click:Connect(function()
+		if openProfilePopup then
+			openProfilePopup(plr, row)
+		end
+	end)
+
+	local rowCorner = Instance.new("UICorner")
+	rowCorner.CornerRadius = UDim.new(0, 8)
+	rowCorner.Parent = row
+
+	local avatar = Instance.new("ImageLabel")
+	avatar.Name = "Avatar"
+	avatar.AnchorPoint = Vector2.new(0, 0.5)
+	avatar.Position = UDim2.new(0, 4, 0.5, 0)
+	avatar.Size = UDim2.new(0, 24, 0, 24)
+	avatar.BackgroundTransparency = 1
+	avatar.ClipsDescendants = false
+	avatar.Parent = row
+
+	local avatarCorner = Instance.new("UICorner")
+	avatarCorner.CornerRadius = UDim.new(1, 0)
+	avatarCorner.Parent = avatar
+
+	loadAvatarThumbnail(avatar, plr.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size48x48)
+
+	-- Largura do nome encolhe se existir o bloco de stats do lado direito
+	local nameRightMargin = hasStats and (STATS_BLOCK_WIDTH + 20) or 8
+
+	local nameLabel = Instance.new("TextLabel")
+	nameLabel.Name = "NameLabel"
+	nameLabel.Size = UDim2.new(1, -(36 + nameRightMargin), 1, 0)
+	nameLabel.Position = UDim2.new(0, 36, 0, 0)
+	nameLabel.BackgroundTransparency = 1
+	nameLabel.Text = plr.DisplayName
+	nameLabel.TextColor3 = (plr == player) and ACCENT_COLOR or Color3.fromRGB(255, 255, 255)
+	nameLabel.Font = (plr == player) and Enum.Font.GothamBold or Enum.Font.Gotham
+	nameLabel.TextSize = 14
+	nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+	nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
+	nameLabel.Parent = row
+
+	if plr ~= player and checkIsFriend(plr) then
+		local friendStar = buildFriendStar()
+		friendStar.Parent = avatar
+	end
+
+	-- ===== BLOCO DE ESTATÍSTICA (separado do nome/avatar por uma divisória) =====
+	if hasStats then
+		local divider = Instance.new("Frame")
+		divider.Name = "StatsDivider"
+		divider.AnchorPoint = Vector2.new(1, 0.5)
+		divider.Position = UDim2.new(1, -(STATS_BLOCK_WIDTH + 12), 0.5, 0)
+		divider.Size = UDim2.new(0, 1, 0, ROW_HEIGHT - 12)
+		divider.BackgroundColor3 = ACCENT_COLOR
+		divider.BackgroundTransparency = 0.65
+		divider.BorderSizePixel = 0
+		divider.Parent = row
+
+		local statsBlock = Instance.new("Frame")
+		statsBlock.Name = "StatsBlock"
+		statsBlock.AnchorPoint = Vector2.new(1, 0.5)
+		statsBlock.Position = UDim2.new(1, -6, 0.5, 0)
+		statsBlock.Size = UDim2.new(0, STATS_BLOCK_WIDTH, 0, ROW_HEIGHT - 8)
+		statsBlock.BackgroundColor3 = STATS_BLOCK_BG
+		statsBlock.BackgroundTransparency = 0.15
+		statsBlock.Parent = row
+
+		local statsBlockCorner = Instance.new("UICorner")
+		statsBlockCorner.CornerRadius = UDim.new(0, 6)
+		statsBlockCorner.Parent = statsBlock
+
+		local statsBlockStroke = Instance.new("UIStroke")
+		statsBlockStroke.Thickness = 1
+		statsBlockStroke.Color = ACCENT_COLOR
+		statsBlockStroke.Transparency = 0.7
+		statsBlockStroke.Parent = statsBlock
+
+		local statValueLabel = Instance.new("TextLabel")
+		statValueLabel.Name = "StatValue"
+		statValueLabel.Size = UDim2.new(1, -6, 0, 16)
+		statValueLabel.Position = UDim2.new(0, 3, 0, 3)
+		statValueLabel.BackgroundTransparency = 1
+		statValueLabel.Font = Enum.Font.GothamBold
+		statValueLabel.TextSize = 13
+		statValueLabel.TextColor3 = ACCENT_COLOR
+		statValueLabel.TextXAlignment = Enum.TextXAlignment.Center
+		statValueLabel.TextTruncate = Enum.TextTruncate.AtEnd
+		statValueLabel.Text = formatStatValue(primaryStat)
+		statValueLabel.Parent = statsBlock
+
+		local statNameLabel = Instance.new("TextLabel")
+		statNameLabel.Name = "StatName"
+		statNameLabel.Size = UDim2.new(1, -6, 0, 12)
+		statNameLabel.Position = UDim2.new(0, 3, 1, -15)
+		statNameLabel.BackgroundTransparency = 1
+		statNameLabel.Font = Enum.Font.Gotham
+		statNameLabel.TextSize = 9
+		statNameLabel.TextColor3 = STATS_COLOR
+		statNameLabel.TextXAlignment = Enum.TextXAlignment.Center
+		statNameLabel.TextTruncate = Enum.TextTruncate.AtEnd
+		statNameLabel.Text = primaryStat.Name:upper()
+		statNameLabel.Parent = statsBlock
+
+		-- Atualiza em tempo real quando o stat mudar
+		local conn
+		conn = primaryStat.Changed:Connect(function()
+			if statValueLabel.Parent then
+				statValueLabel.Text = formatStatValue(primaryStat)
+			else
+				conn:Disconnect()
+			end
+		end)
+		row.Destroying:Connect(function()
+			conn:Disconnect()
+		end)
+	end
+
+	row.MouseEnter:Connect(function()
+		TweenService:Create(row, TweenInfo.new(0.15), {BackgroundTransparency = 0, Size = UDim2.new(1, 0, 0, ROW_HOVER_HEIGHT)}):Play()
+		TweenService:Create(row, TweenInfo.new(0.15), {BackgroundColor3 = ROW_HOVER_COLOR}):Play()
+	end)
+	row.MouseLeave:Connect(function()
+		TweenService:Create(row, TweenInfo.new(0.15), {BackgroundTransparency = 0.15, Size = UDim2.new(1, 0, 0, ROW_HEIGHT)}):Play()
+		TweenService:Create(row, TweenInfo.new(0.15), {BackgroundColor3 = ROW_COLOR}):Play()
+	end)
+
+	return row
+end
+
+local function animateRowIn(row, delayTime)
+	local baseHeight = ROW_HEIGHT
+	row.Position = UDim2.new(0, 20, 0, 0)
+	row.BackgroundTransparency = 1
+	for _, child in ipairs(row:GetChildren()) do
+		if child:IsA("TextLabel") then child.TextTransparency = 1 end
+		if child:IsA("ImageLabel") then child.ImageTransparency = 1 end
+	end
+
+	task.delay(delayTime, function()
+		if not row.Parent then return end
+		TweenService:Create(row, TweenInfo.new(0.3, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+			Position = UDim2.new(0, 0, 0, 0),
+			BackgroundTransparency = 0.15,
+			Size = UDim2.new(1, 0, 0, baseHeight),
+		}):Play()
+		for _, child in ipairs(row:GetChildren()) do
+			if child:IsA("TextLabel") then
+				TweenService:Create(child, TweenInfo.new(0.3), {TextTransparency = 0}):Play()
+			elseif child:IsA("ImageLabel") then
+				TweenService:Create(child, TweenInfo.new(0.3), {ImageTransparency = 0}):Play()
+			end
+		end
+	end)
+end
+
+local function refreshList()
+	for _, child in ipairs(container:GetChildren()) do
+		if child:IsA("TextButton") then
+			child:Destroy()
+		end
+	end
+
+	local playersList = Players:GetPlayers()
+	table.sort(playersList, function(a, b)
+		return a.DisplayName:lower() < b.DisplayName:lower()
+	end)
+
+	for i, plr in ipairs(playersList) do
+		local row = createPlayerRow(plr, i)
+		animateRowIn(row, (i - 1) * 0.06)
+	end
+
+	title.Text = ("JOGADORES (%d)"):format(#playersList)
+end
+
+Players.PlayerAdded:Connect(refreshList)
+Players.PlayerRemoving:Connect(function()
+	task.defer(refreshList)
+end)
+
+-- Se o leaderstats aparecer/mudar depois (comum: carrega alguns segundos após o spawn),
+-- a lista refaz as rows automaticamente pra já exibir os stats.
+Players.PlayerAdded:Connect(function(plr)
+	plr.ChildAdded:Connect(function(child)
+		if child.Name == "leaderstats" then
+			task.defer(refreshList)
+		end
+	end)
+end)
+for _, plr in ipairs(Players:GetPlayers()) do
+	plr.ChildAdded:Connect(function(child)
+		if child.Name == "leaderstats" then
+			task.defer(refreshList)
+		end
+	end)
+end
+
+refreshList()
+
+for _, plr in ipairs(Players:GetPlayers()) do
+	if plr ~= player then
+		friendCache[plr.UserId] = checkIsFriend(plr)
+	end
+end
+
+Players.PlayerAdded:Connect(function(plr)
+	if plr ~= player then
+		friendCache[plr.UserId] = checkIsFriend(plr)
+	end
+end)
+
+-- ===================== TOGGLE (TAB) =====================
+
+local isExpanded = false
+local tweening = false
+
+local function setExpanded(expanded)
+	if tweening then return end
+	tweening = true
+	isExpanded = expanded
+
+	local targetSize = expanded and EXPANDED_SIZE or MINIMIZED_SIZE
+	local targetShadowTransparency = expanded and 0.45 or 1
+
+	local tween = TweenService:Create(mainFrame, TweenInfo.new(TWEEN_TIME, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Size = targetSize })
+	local shadowTween = TweenService:Create(shadow, TweenInfo.new(TWEEN_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { ImageTransparency = targetShadowTransparency })
+
+	tween:Play()
+	shadowTween:Play()
+	tween.Completed:Connect(function()
+		tweening = false
+	end)
+end
+
+UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
+	if gameProcessedEvent then return end
+	if input.KeyCode == Enum.KeyCode.Tab then
+		setExpanded(not isExpanded)
+	end
+end)
+
+-- ======================================================
+--     PERFIL DO JOGADOR (MENU LATERAL, ESTILO NATIVO)
+-- ======================================================
+
+local closeCatcher = Instance.new("TextButton")
+closeCatcher.Name = "CloseCatcher"
+closeCatcher.Size = UDim2.new(1, 0, 1, 0)
+closeCatcher.BackgroundTransparency = 1
+closeCatcher.Text = ""
+closeCatcher.Visible = false
+closeCatcher.ZIndex = 19
+closeCatcher.Parent = screenGui
+
+local profileCard = Instance.new("Frame")
+profileCard.Name = "ProfileCard"
+profileCard.AnchorPoint = Vector2.new(1, 0)
+profileCard.Size = UDim2.new(0, 230, 0, 260)
+profileCard.BackgroundColor3 = BG_COLOR_TOP
+profileCard.Visible = false
+profileCard.ZIndex = 21
+profileCard.Parent = screenGui
+
+local profileCorner = Instance.new("UICorner")
+profileCorner.CornerRadius = UDim.new(0, 12)
+profileCorner.Parent = profileCard
+
+local profileGradient = Instance.new("UIGradient")
+profileGradient.Color = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, BG_COLOR_TOP),
+	ColorSequenceKeypoint.new(1, BG_COLOR_BOTTOM),
+})
+profileGradient.Rotation = 90
+profileGradient.Parent = profileCard
+
+local profileStroke = Instance.new("UIStroke")
+profileStroke.Color = ACCENT_COLOR
+profileStroke.Thickness = 1.5
+profileStroke.Transparency = 0.5
+profileStroke.Parent = profileCard
+
+local profileHeader = Instance.new("Frame")
+profileHeader.Size = UDim2.new(1, 0, 0, 60)
+profileHeader.BackgroundTransparency = 1
+profileHeader.ZIndex = 22
+profileHeader.Parent = profileCard
+
+local profileAvatar = Instance.new("ImageLabel")
+profileAvatar.AnchorPoint = Vector2.new(0, 0.5)
+profileAvatar.Position = UDim2.new(0, 12, 0.5, 0)
+profileAvatar.Size = UDim2.new(0, 44, 0, 44)
+profileAvatar.BackgroundColor3 = ROW_COLOR
+profileAvatar.ClipsDescendants = false
+profileAvatar.ZIndex = 22
+profileAvatar.Parent = profileHeader
+
+local profileAvatarCorner = Instance.new("UICorner")
+profileAvatarCorner.CornerRadius = UDim.new(1, 0)
+profileAvatarCorner.Parent = profileAvatar
+
+local profileFriendStar = nil
+
+local profileName = Instance.new("TextLabel")
+profileName.Position = UDim2.new(0, 66, 0, 8)
+profileName.Size = UDim2.new(1, -76, 0, 20)
+profileName.BackgroundTransparency = 1
+profileName.Font = Enum.Font.GothamBold
+profileName.TextSize = 15
+profileName.TextColor3 = Color3.fromRGB(255, 255, 255)
+profileName.TextXAlignment = Enum.TextXAlignment.Left
+profileName.TextTruncate = Enum.TextTruncate.AtEnd
+profileName.Text = ""
+profileName.ZIndex = 22
+profileName.Parent = profileHeader
+
+local profileHandle = Instance.new("TextLabel")
+profileHandle.Position = UDim2.new(0, 66, 0, 28)
+profileHandle.Size = UDim2.new(1, -76, 0, 18)
+profileHandle.BackgroundTransparency = 1
+profileHandle.Font = Enum.Font.Gotham
+profileHandle.TextSize = 13
+profileHandle.TextColor3 = Color3.fromRGB(160, 160, 170)
+profileHandle.TextXAlignment = Enum.TextXAlignment.Left
+profileHandle.TextTruncate = Enum.TextTruncate.AtEnd
+profileHandle.Text = ""
+profileHandle.ZIndex = 22
+profileHandle.Parent = profileHeader
+
+local divider = Instance.new("Frame")
+divider.Position = UDim2.new(0, 0, 0, 60)
+divider.Size = UDim2.new(1, 0, 0, 1)
+divider.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+divider.BackgroundTransparency = 0.9
+divider.BorderSizePixel = 0
+divider.ZIndex = 22
+divider.Parent = profileCard
+
+-- ===== SEÇÃO DE STATS COMPLETA NO PERFIL =====
+local statsSection = Instance.new("Frame")
+statsSection.Name = "StatsSection"
+statsSection.Position = UDim2.new(0, 12, 0, 66)
+statsSection.Size = UDim2.new(1, -24, 0, 0)
+statsSection.BackgroundTransparency = 1
+statsSection.AutomaticSize = Enum.AutomaticSize.Y
+statsSection.ZIndex = 22
+statsSection.Parent = profileCard
+
+local statsLayout = Instance.new("UIListLayout")
+statsLayout.Padding = UDim.new(0, 2)
+statsLayout.SortOrder = Enum.SortOrder.LayoutOrder
+statsLayout.Parent = statsSection
+
+local function clearStatsSection()
+	for _, child in ipairs(statsSection:GetChildren()) do
+		if child:IsA("TextLabel") then
+			child:Destroy()
+		end
+	end
+end
+
+local function populateStatsSection(targetPlayer)
+	clearStatsSection()
+	local ls = getLeaderstats(targetPlayer)
+	if not ls then return end
+
+	local order = 1
+	for _, statObj in ipairs(ls:GetChildren()) do
+		if statObj:IsA("ValueBase") then
+			local line = Instance.new("TextLabel")
+			line.Name = "Stat_" .. statObj.Name
+			line.LayoutOrder = order
+			line.Size = UDim2.new(1, 0, 0, 16)
+			line.BackgroundTransparency = 1
+			line.Font = Enum.Font.Gotham
+			line.TextSize = 12
+			line.TextColor3 = STATS_COLOR
+			line.TextXAlignment = Enum.TextXAlignment.Left
+			line.Text = statObj.Name .. ": " .. formatStatValue(statObj)
+			line.ZIndex = 22
+			line.Parent = statsSection
+			order += 1
+
+			statObj.Changed:Connect(function()
+				if line.Parent then
+					line.Text = statObj.Name .. ": " .. formatStatValue(statObj)
+				end
+			end)
+		end
+	end
+end
+
+-- O menu (Friend/Examine/Block/Report) fica logo abaixo dos stats,
+-- então ele é reposicionado sempre que os stats mudam de altura.
+local menuHolder = Instance.new("Frame")
+menuHolder.Size = UDim2.new(1, 0, 0, 176)
+menuHolder.BackgroundTransparency = 1
+menuHolder.ZIndex = 22
+menuHolder.Parent = profileCard
+
+local menuLayout = Instance.new("UIListLayout")
+menuLayout.SortOrder = Enum.SortOrder.LayoutOrder
+menuLayout.Parent = menuHolder
+
+local function repositionMenu()
+	local statsHeight = statsSection.AbsoluteSize.Y
+	local menuY = 66 + statsHeight + (statsHeight > 0 and 8 or 0)
+	menuHolder.Position = UDim2.new(0, 0, 0, menuY)
+	profileCard.Size = UDim2.new(0, 230, 0, menuY + menuHolder.Size.Y.Offset + 8)
+end
+
+statsSection:GetPropertyChangedSignal("AbsoluteSize"):Connect(repositionMenu)
+
+local function makeMenuItem(iconKind, text, order)
+	local item = Instance.new("TextButton")
+	item.Name = text
+	item.LayoutOrder = order
+	item.Size = UDim2.new(1, 0, 0, 44)
+	item.BackgroundTransparency = 1
+	item.AutoButtonColor = false
+	item.Text = ""
+	item.ZIndex = 22
+	item.Parent = menuHolder
+
+	local iconBox = buildMenuIcon(iconKind)
+	iconBox.AnchorPoint = Vector2.new(0, 0.5)
+	iconBox.Position = UDim2.new(0, 14, 0.5, 0)
+	iconBox.Parent = item
+
+	local textLabel = Instance.new("TextLabel")
+	textLabel.Position = UDim2.new(0, 46, 0, 0)
+	textLabel.Size = UDim2.new(1, -56, 1, 0)
+	textLabel.BackgroundTransparency = 1
+	textLabel.Font = Enum.Font.Gotham
+	textLabel.TextSize = 15
+	textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+	textLabel.TextXAlignment = Enum.TextXAlignment.Left
+	textLabel.Text = text
+	textLabel.ZIndex = 22
+	textLabel.Parent = item
+
+	item.MouseEnter:Connect(function()
+		TweenService:Create(item, TweenInfo.new(0.12), {BackgroundTransparency = 0, BackgroundColor3 = MENU_HOVER}):Play()
+	end)
+	item.MouseLeave:Connect(function()
+		TweenService:Create(item, TweenInfo.new(0.12), {BackgroundTransparency = 1}):Play()
+	end)
+
+	return item, textLabel
+end
+
+local friendItem, friendLabel = makeMenuItem("friend", "Friend Request", 1)
+local inspectItem = makeMenuItem("examine", "Examine Avatar", 2)
+local blockItem = makeMenuItem("block", "Block", 3)
+local reportItem = makeMenuItem("report", "Report Abuse", 4)
+
+local currentProfileTarget = nil
+
+local function closeProfilePopup()
+	profileCard.Visible = false
+	closeCatcher.Visible = false
+	currentProfileTarget = nil
+end
+
+closeCatcher.MouseButton1Click:Connect(closeProfilePopup)
+
+local function refreshFriendLabel(targetPlayer)
+	local isFriend = checkIsFriend(targetPlayer)
+	friendLabel.Text = isFriend and "Unfriend" or "Friend Request"
+
+	if profileFriendStar then
+		profileFriendStar:Destroy()
+		profileFriendStar = nil
+	end
+	if isFriend then
+		profileFriendStar = buildFriendStar()
+		profileFriendStar.Size = UDim2.new(0, 18, 0, 18)
+		profileFriendStar.Parent = profileAvatar
+	end
+end
+
+openProfilePopup = function(targetPlayer, anchorRow)
+	if targetPlayer == player then return end
+	currentProfileTarget = targetPlayer
+
+	profileName.Text = targetPlayer.DisplayName
+	profileHandle.Text = "@" .. targetPlayer.Name
+	refreshFriendLabel(targetPlayer)
+	populateStatsSection(targetPlayer)
+	repositionMenu()
+
+	loadAvatarThumbnail(profileAvatar, targetPlayer.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
+
+	local rowAbsY = anchorRow.AbsolutePosition.Y
+	local mainFrameAbsX = mainFrame.AbsolutePosition.X
+
+	local screenHeight = screenGui.AbsoluteSize.Y
+	local cardHeight = profileCard.Size.Y.Offset
+	local targetY = math.clamp(rowAbsY - 10, 8, screenHeight - cardHeight - 8)
+
+	profileCard.Position = UDim2.new(0, mainFrameAbsX - 12, 0, targetY)
+	profileCard.Visible = true
+	closeCatcher.Visible = true
+end
+
+friendItem.MouseButton1Click:Connect(function()
+	if not currentProfileTarget then return end
+	local isFriend = checkIsFriend(currentProfileTarget)
+	pcall(function()
+		if isFriend then
+			StarterGui:SetCore("PromptUnfriend", currentProfileTarget)
+		else
+			StarterGui:SetCore("PromptSendFriendRequest", currentProfileTarget)
+		end
+	end)
+	closeProfilePopup()
+end)
+
+blockItem.MouseButton1Click:Connect(function()
+	if not currentProfileTarget then return end
+	pcall(function()
+		StarterGui:SetCore("PromptBlockPlayer", currentProfileTarget)
+	end)
+	closeProfilePopup()
+end)
+
+reportItem.MouseButton1Click:Connect(function()
+	if not currentProfileTarget then return end
+	pcall(function()
+		StarterGui:SetCore("PromptReportAbuse", currentProfileTarget)
+	end)
+	closeProfilePopup()
+end)
+
+inspectItem.MouseButton1Click:Connect(function()
+	if not currentProfileTarget then return end
+	local target = currentProfileTarget
+	closeProfilePopup()
+	pcall(function()
+		GuiService:InspectPlayerFromUserId(target.UserId)
+	end)
+end)
+
+-- ======================================================
+--        NOTIFICAÇÃO DE STATUS DE AMIZADE
+-- ======================================================
+
+local NOTIFICATION_SOUND_POSITIVE_ID = "rbxassetid://6518811702"
+local NOTIFICATION_SOUND_NEGATIVE_ID = "rbxassetid://9046485535"
+
+local notifSound = Instance.new("Sound")
+notifSound.Name = "FriendStatusSound"
+notifSound.SoundId = NOTIFICATION_SOUND_POSITIVE_ID
+notifSound.Volume = 0.6
+notifSound.Parent = SoundService
+
+local notifGui = Instance.new("ScreenGui")
+notifGui.Name = "FriendNotificationGui"
+notifGui.ResetOnSpawn = false
+notifGui.DisplayOrder = 2147483647
+notifGui.IgnoreGuiInset = true
+notifGui.Parent = player:WaitForChild("PlayerGui")
+
+local notifToast = Instance.new("Frame")
+notifToast.Name = "FriendJoinToast"
+notifToast.AnchorPoint = Vector2.new(0.5, 0)
+notifToast.Position = UDim2.new(0.5, 0, 0, -80)
+notifToast.Size = UDim2.new(0, 320, 0, 60)
+notifToast.BackgroundColor3 = BG_COLOR_TOP
+notifToast.ZIndex = 40
+notifToast.Parent = notifGui
+
+local notifCorner = Instance.new("UICorner")
+notifCorner.CornerRadius = UDim.new(0, 10)
+notifCorner.Parent = notifToast
+
+local notifStroke = Instance.new("UIStroke")
+notifStroke.Color = Color3.fromRGB(90, 220, 130)
+notifStroke.Thickness = 1.5
+notifStroke.Transparency = 0.4
+notifStroke.Parent = notifToast
+
+local notifAvatar = Instance.new("ImageLabel")
+notifAvatar.AnchorPoint = Vector2.new(0, 0.5)
+notifAvatar.Position = UDim2.new(0, 10, 0.5, 0)
+notifAvatar.Size = UDim2.new(0, 40, 0, 40)
+notifAvatar.BackgroundColor3 = ROW_COLOR
+notifAvatar.ZIndex = 40
+notifAvatar.Parent = notifToast
+
+local notifAvatarCorner = Instance.new("UICorner")
+notifAvatarCorner.CornerRadius = UDim.new(1, 0)
+notifAvatarCorner.Parent = notifAvatar
+
+local notifText = Instance.new("TextLabel")
+notifText.Position = UDim2.new(0, 60, 0, 0)
+notifText.Size = UDim2.new(1, -70, 1, 0)
+notifText.BackgroundTransparency = 1
+notifText.Font = Enum.Font.Gotham
+notifText.TextSize = 14
+notifText.TextWrapped = true
+notifText.TextColor3 = Color3.fromRGB(255, 255, 255)
+notifText.TextXAlignment = Enum.TextXAlignment.Left
+notifText.Text = ""
+notifText.ZIndex = 40
+notifText.Parent = notifToast
+
+local notifTweening = false
+
+local function showFriendNotification(targetPlayer, eventType)
+	if notifTweening then task.wait(0.6) end
+	notifTweening = true
+
+	local isPositive = (eventType == "join" or eventType == "friended")
+	local accentColor = isPositive and Color3.fromRGB(90, 220, 130) or Color3.fromRGB(230, 110, 90)
+
+	local verb
+	if eventType == "join" then verb = " juntou-se a você!"
+	elseif eventType == "leave" then verb = " saiu do jogo."
+	elseif eventType == "friended" then verb = " agora é seu amigo!"
+	else verb = " não é mais seu amigo." end
+
+	notifStroke.Color = accentColor
+	notifText.Text = targetPlayer.DisplayName .. verb
+	notifSound.SoundId = isPositive and NOTIFICATION_SOUND_POSITIVE_ID or NOTIFICATION_SOUND_NEGATIVE_ID
+
+	loadAvatarThumbnail(notifAvatar, targetPlayer.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size48x48)
+
+	pcall(function() notifSound:Play() end)
+
+	local slideIn = TweenService:Create(notifToast, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Position = UDim2.new(0.5, 0, 0, 16)})
+	slideIn:Play()
+	slideIn.Completed:Wait()
+
+	task.wait(3.5)
+
+	local slideOut = TweenService:Create(notifToast, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {Position = UDim2.new(0.5, 0, 0, -80)})
+	slideOut:Play()
+	slideOut.Completed:Wait()
+
+	notifTweening = false
+end
+
+Players.PlayerAdded:Connect(function(newPlayer)
+	if newPlayer == player then return end
+	if checkIsFriend(newPlayer) then
+		task.spawn(function() showFriendNotification(newPlayer, "join") end)
+	end
+end)
+
+Players.PlayerRemoving:Connect(function(leavingPlayer)
+	if leavingPlayer == player then return end
+	if checkIsFriend(leavingPlayer) then
+		task.spawn(function() showFriendNotification(leavingPlayer, "leave") end)
+	end
+	friendCache[leavingPlayer.UserId] = nil
+end)
+
+task.spawn(function()
+	while true do
+		task.wait(FRIEND_CHECK_INTERVAL)
+		for _, plr in ipairs(Players:GetPlayers()) do
+			if plr ~= player then
+				local isFriendNow = checkIsFriend(plr)
+				local wasFriend = friendCache[plr.UserId]
+
+				if wasFriend ~= nil and wasFriend ~= isFriendNow then
+					friendCache[plr.UserId] = isFriendNow
+					if isFriendNow then
+						task.spawn(function() showFriendNotification(plr, "friended") end)
+					else
+						task.spawn(function() showFriendNotification(plr, "unfriended") end)
+					end
+					refreshList()
+				else
+					friendCache[plr.UserId] = isFriendNow
+				end
+			end
+		end
+	end
+end)
