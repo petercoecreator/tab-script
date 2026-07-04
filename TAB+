@@ -1093,16 +1093,35 @@ end)
 --     Integrada no botao "Teleport To" do About Popup
 -- ======================================================
 
-local TELEPORT_SOUND_ID = "rbxassetid://130812445847353"
+local TELEPORT_SOUND_ID = "rbxassetid://130845581077634"
 
 local function playTeleportSound(volume)
 	local sound = Instance.new("Sound")
 	sound.SoundId = TELEPORT_SOUND_ID
 	sound.Volume = volume or 0.9
 	sound.Parent = SoundService
-	sound:Play()
+
+	-- Toca o som APENAS para o jogador local (ninguem mais escuta)
+	local success, err = pcall(function()
+		SoundService:PlayLocalSound(sound)
+	end)
+
+	if not success then
+		pcall(function()
+			sound:Play()
+		end)
+	end
+
 	sound.Ended:Connect(function()
-		sound:Destroy()
+		if sound and sound.Parent then
+			sound:Destroy()
+		end
+	end)
+
+	task.delay(10, function()
+		if sound and sound.Parent then
+			sound:Destroy()
+		end
 	end)
 end
 
@@ -1205,6 +1224,9 @@ teleportItem.MouseButton1Click:Connect(function()
 	-- SALVA o target ANTES de fechar o popup
 	local target = currentAboutTarget
 	closeAboutPopup()
+
+	-- TOCA O SOM DE TELEPORTE IMEDIATAMENTE
+	playTeleportSound(1)
 
 	local targetChar = target.Character
 	local myChar = player.Character
