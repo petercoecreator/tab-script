@@ -1338,3 +1338,252 @@ task.spawn(function()
 		end
 	end
 end)
+--------------------------novo script embaixo--
+
+--[[
+    PORTAL TELEPORT - COM BOTÃO TOGGLE
+    Simplificado por PeterCoe
+]]
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+
+local localPlayer = Players.LocalPlayer
+camera = workspace.CurrentCamera
+
+-- = :::: VARIÁVEIS :::: =
+local isCooldown = false
+local teleportEnabled = true  -- Começa ativado
+
+-- = :::: ÁUDIO :::: =
+local TELEPORT_SOUND_ID = "rbxassetid://130812445847353"
+
+local function playEffectSound(id, volume)
+    local sound = Instance.new("Sound")
+    sound.SoundId = id
+    sound.Volume = volume or 0.6
+    sound.Parent = game:GetService("SoundService")
+    sound:Play()
+    sound.Ended:Connect(function() sound:Destroy() end)
+end
+
+-- = :::: CÂMERA :::: =
+local function lockCameraTo(targetCFrame, duration)
+    camera.CameraType = Enum.CameraType.Scriptable
+    local goalCF = targetCFrame * CFrame.new(0, 5, 12)
+    local tween = TweenService:Create(camera, TweenInfo.new(0.5, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {CFrame = goalCF})
+    tween:Play()
+    task.delay(duration, function()
+        camera.CameraType = Enum.CameraType.Custom
+    end)
+end
+
+-- = :::: PARTÍCULAS DO PORTAL :::: =
+local function addPortalEffects(parent)
+    local attachment = Instance.new("Attachment", parent)
+    local nebula = Instance.new("ParticleEmitter", attachment)
+    nebula.Texture = "rbxassetid://6031302855"
+    nebula.Color = ColorSequence.new(Color3.fromRGB(0, 0, 0), Color3.fromRGB(0, 255, 255))
+    nebula.Lifetime = NumberRange.new(0.8, 1.2)
+    nebula.Rate = 150
+    nebula.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 5), NumberSequenceKeypoint.new(1, 0)})
+    nebula.Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0.4), NumberSequenceKeypoint.new(1, 1)})
+    nebula.Speed = NumberRange.new(2, 5)
+    nebula.RotSpeed = NumberRange.new(-50, 50)
+
+    local lightning = Instance.new("ParticleEmitter", attachment)
+    lightning.Texture = "rbxassetid://281983213"
+    lightning.Rate = 20
+    lightning.Size = NumberSequence.new(3)
+    lightning.Lifetime = NumberRange.new(0.1, 0.2)
+    lightning.Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(1, 1)})
+end
+
+-- = :::: CRIAR PORTAL :::: =
+local function createRealisticPortal(pos, isFlat, duration)
+    local container = Instance.new("Model", workspace)
+    local baseCF = isFlat and (pos * CFrame.Angles(math.rad(90), 0, 0)) or (pos * CFrame.Angles(0, 0, math.rad(90)))
+    local lifeTime = duration or 2.5
+
+    local core = Instance.new("Part")
+    core.Shape = Enum.PartType.Cylinder
+    core.Color = Color3.new(0, 0, 0)
+    core.Material = Enum.Material.Glass
+    core.Size = Vector3.new(0.3, 0, 0)
+    core.Anchored = true
+    core.CanCollide = false
+    core.CFrame = baseCF
+    core.Parent = container
+
+    local core2 = core:Clone()
+    core2.CFrame = core.CFrame * CFrame.new(-0.15, 0, 0)
+    core2.Parent = container
+
+    local edge = Instance.new("Part")
+    edge.Shape = Enum.PartType.Cylinder
+    edge.Color = Color3.fromRGB(0, 255, 255)
+    edge.Material = Enum.Material.Neon
+    edge.Size = Vector3.new(0.1, 0, 0)
+    edge.Anchored = true
+    edge.CanCollide = false
+    edge.CFrame = core.CFrame * CFrame.new(-0.05, 0, 0)
+    edge.Parent = container
+
+    local light = Instance.new("PointLight", edge)
+    light.Color = Color3.fromRGB(0, 255, 255)
+    light.Range = 25
+    light.Brightness = 10
+    addPortalEffects(edge)
+
+    local info = TweenInfo.new(0.6, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out)
+    TweenService:Create(core, info, {Size = Vector3.new(0.3, 8, 8)}):Play()
+    TweenService:Create(core2, info, {Size = Vector3.new(0.3, 8, 8)}):Play()
+    TweenService:Create(edge, info, {Size = Vector3.new(0.1, 8.8, 8.8)}):Play()
+
+    local conn
+    conn = RunService.Heartbeat:Connect(function()
+        if not edge or not edge.Parent then
+            conn:Disconnect()
+            return
+        end
+        edge.CFrame = edge.CFrame * CFrame.new(0, 0, 0) * CFrame.Angles(math.rad(4), 0, 0)
+        edge.Size = Vector3.new(0.1, 8.8 + math.sin(tick() * 20) * 0.2, 8.8 + math.sin(tick() * 20) * 0.2)
+    end)
+
+    task.delay(lifeTime, function()
+        if container then
+            if conn then conn:Disconnect() end
+            local closeInfo = TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.In)
+            TweenService:Create(core, closeInfo, {Size = Vector3.new(0.3, 0, 0)}):Play()
+            TweenService:Create(core2, closeInfo, {Size = Vector3.new(0.3, 0, 0)}):Play()
+            local t = TweenService:Create(edge, closeInfo, {Size = Vector3.new(0.1, 0, 0)})
+            t:Play()
+            t.Completed:Connect(function()
+                container:Destroy()
+            end)
+        end
+    end)
+end
+
+-- = :::: TELEPORTE COM T :::: =
+local function createLinkPortals()
+    if not teleportEnabled or not localPlayer.Character or isCooldown then
+        return
+    end
+
+    isCooldown = true
+    local character = localPlayer.Character
+    local root = character:FindFirstChild("HumanoidRootPart")
+    if not root then
+        isCooldown = false
+        return
+    end
+
+    local entryPos = root.CFrame * CFrame.new(0, -3.1, -10)
+
+    local mousePos = UserInputService:GetMouseLocation()
+    local unitRay = camera:ViewportPointToRay(mousePos.X, mousePos.Y)
+
+    local rayParams = RaycastParams.new()
+    rayParams.FilterDescendantsInstances = {character}
+    rayParams.FilterType = Enum.RaycastFilterType.Exclude
+
+    local rayResult = workspace:Raycast(unitRay.Origin, unitRay.Direction * 1000, rayParams)
+    local exitPos = rayResult and CFrame.new(rayResult.Position + Vector3.new(0, 0.1, 0)) or CFrame.new(unitRay.Origin + unitRay.Direction * 30)
+
+    lockCameraTo(exitPos, 2.8)
+    createRealisticPortal(entryPos, true, 1.5)
+    playEffectSound(TELEPORT_SOUND_ID, 0.9)
+
+    task.wait(0.2)
+    TweenService:Create(root, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.In), {CFrame = entryPos}):Play()
+
+    local originalStates = {}
+    for _, part in pairs(character:GetDescendants()) do
+        if part:IsA("BasePart") then
+            originalStates[part] = {
+                Size = part.Size,
+                Trans = part.Transparency,
+                CanCollide = part.CanCollide
+            }
+            TweenService:Create(part, TweenInfo.new(0.4, Enum.EasingStyle.Quart, Enum.EasingDirection.In), {
+                Size = part.Size * Vector3.new(0.1, 8, 0.1),
+                Transparency = 1
+            }):Play()
+            part.CanCollide = false
+        end
+    end
+
+    task.wait(0.6)
+    root.CFrame = exitPos * CFrame.new(0, 100, 0)
+    task.wait(0.5)
+
+    createRealisticPortal(exitPos, true, 2.0)
+    playEffectSound(TELEPORT_SOUND_ID, 1.1)
+
+    task.wait(0.4)
+    root.CFrame = exitPos * CFrame.new(0, 3, 0)
+
+    for part, data in pairs(originalStates) do
+        if part and part.Parent then
+            TweenService:Create(part, TweenInfo.new(0.6, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out), {
+                Size = data.Size,
+                Transparency = data.Trans
+            }):Play()
+            task.delay(0.6, function()
+                part.CanCollide = data.CanCollide
+            end)
+        end
+    end
+
+    task.delay(2, function()
+        isCooldown = false
+    end)
+end
+
+-- = :::: BOTÃO TOGGLE MINI :::: =
+local PlayerGui = localPlayer:WaitForChild("PlayerGui")
+local screenGui = Instance.new("ScreenGui", PlayerGui)
+screenGui.Name = "PortalToggle"
+screenGui.ResetOnSpawn = false
+
+local toggleBtn = Instance.new("TextButton", screenGui)
+toggleBtn.Name = "ToggleBtn"
+toggleBtn.Size = UDim2.new(0, 50, 0, 22)
+toggleBtn.Position = UDim2.new(0.5, -25, 0, 8)
+toggleBtn.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
+toggleBtn.TextColor3 = Color3.new(1, 1, 1)
+toggleBtn.Text = "ON"
+toggleBtn.Font = Enum.Font.GothamBold
+toggleBtn.TextSize = 11
+
+local corner = Instance.new("UICorner", toggleBtn)
+corner.CornerRadius = UDim.new(0, 6)
+
+local stroke = Instance.new("UIStroke", toggleBtn)
+stroke.Color = Color3.fromRGB(255, 255, 255)
+stroke.Thickness = 1.5
+stroke.Transparency = 0.3
+
+-- Função do botão
+toggleBtn.MouseButton1Click:Connect(function()
+    teleportEnabled = not teleportEnabled
+    if teleportEnabled then
+        toggleBtn.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
+        toggleBtn.Text = "ON"
+    else
+        toggleBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+        toggleBtn.Text = "OFF"
+    end
+end)
+
+-- = :::: EVENTO T :::: =
+UserInputService.InputBegan:Connect(function(input, processed)
+    if not processed and input.KeyCode == Enum.KeyCode.T then
+        createLinkPortals()
+    end
+end)
+
+print("Portal Toggle carregado! Botão no topo da tela para ligar/desligar.")
