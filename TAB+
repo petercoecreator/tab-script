@@ -1,6 +1,6 @@
 --[[
-	CustomPlayerList.lua  (com bloqueio total do Tab nativo + LEADERSTATS)
-	+ INTEGRACAO: Animacao de Teleporte 3D (Portal Master Style) no "Teleport To"
+	CustomPlayerList.lua - Parte 1: BLOQUEIO E CONFIGURAÇÃO
+	Feito por PeterCoe
 ]]
 
 local Players = game:GetService("Players")
@@ -11,36 +11,74 @@ local TweenService = game:GetService("TweenService")
 local SoundService = game:GetService("SoundService")
 local RunService = game:GetService("RunService")
 local Debris = game:GetService("Debris")
+local ContextActionService = game:GetService("ContextActionService")
 
 local player = Players.LocalPlayer
 
--- ===================== BLOQUEIO DO TAB NATIVO =====================
+-- ===================== BLOQUEIO TOTAL DO TAB NATIVO =====================
 pcall(function()
 	StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.PlayerList, false)
-end)
-
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-	if gameProcessed then return end
-	if input.KeyCode == Enum.KeyCode.Tab then
-		pcall(function()
-			StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.PlayerList, false)
-		end)
-	end
 end)
 
 task.spawn(function()
 	while true do
 		pcall(function()
-			if StarterGui:GetCoreGuiEnabled(Enum.CoreGuiType.PlayerList) then
-				StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.PlayerList, false)
-			end
+			StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.PlayerList, false)
 		end)
-		task.wait(0.1)
+		task.wait(0.05)
 	end
 end)
 
--- ===================== CONFIG =====================
+player.CharacterAdded:Connect(function()
+	task.wait(0.5)
+	pcall(function()
+		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.PlayerList, false)
+	end)
+end)
 
+-- ===================== BLOQUEIO DE GUIS CUSTOMIZADAS =====================
+local function blockCustomPlayerlists()
+	local playerGui = player:WaitForChild("PlayerGui")
+	local commonNames = {
+		"PlayerList", "Playerlist", "playerlist", "Players", "players",
+		"Leaderboard", "leaderboard", "Scoreboard", "scoreboard",
+		"TabMenu", "Tab", "tab", "Menu", "menu",
+		"PlayerFrame", "UIList", "PlayerBoard",
+		"LeaderstatsGUI", "StatsGUI", "PlayerStats", "GameMenu",
+		"RoactPlayerList", "PlayerListApp", "PlayerListMaster",
+		"TopBar", "Topbar", "topbar", "TopBarPlus", "Icon"
+	}
+
+	local function checkAndBlock(gui)
+		if not gui:IsA("ScreenGui") then return end
+		local lowerName = gui.Name:lower()
+		for _, commonName in ipairs(commonNames) do
+			if lowerName:find(commonName:lower()) then
+				if gui.Name ~= "CustomPlayerList" and gui.Name ~= "FriendNotificationGui" then
+					pcall(function() gui.Enabled = false end)
+				end
+			end
+		end
+	end
+
+	for _, gui in ipairs(playerGui:GetChildren()) do
+		checkAndBlock(gui)
+	end
+
+	playerGui.ChildAdded:Connect(function(child)
+		task.wait(0.1)
+		checkAndBlock(child)
+	end)
+end
+
+task.spawn(blockCustomPlayerlists)
+
+-- ===================== NOTIFICAÇÃO DE AMIGO =====================
+-- Notificação nativa do Roblox mantida (não bloqueada)
+
+
+
+-- ===================== CONFIGURAÇÕES =====================
 local EXPANDED_SIZE   = UDim2.new(0, 240, 0, 320)
 local MINIMIZED_SIZE  = UDim2.new(0, 240, 0, 34)
 local TWEEN_TIME      = 0.35
@@ -52,28 +90,23 @@ local ROW_COLOR       = Color3.fromRGB(45, 45, 56)
 local ROW_HOVER_COLOR = Color3.fromRGB(60, 65, 90)
 local MENU_HOVER      = Color3.fromRGB(45, 100, 75)
 local STATS_COLOR     = Color3.fromRGB(170, 175, 190)
-
-local SHADOW_IMAGE = "rbxassetid://1316045217"
+local SHADOW_IMAGE    = "rbxassetid://1316045217"
 
 local FRIEND_CHECK_INTERVAL = 6
-
 local STATS_BLOCK_WIDTH = 74
 local STATS_BLOCK_BG    = Color3.fromRGB(36, 36, 48)
 local ROW_HEIGHT        = 38
 local ROW_HOVER_HEIGHT  = 42
 
-local openProfilePopup
-
 local friendCache = {}
 
+-- ===================== HELPERS =====================
 local function checkIsFriend(targetPlayer)
 	local ok, isFriend = pcall(function()
 		return player:IsFriendsWith(targetPlayer.UserId)
 	end)
 	return ok and isFriend or false
 end
-
--- ===================== LEADERSTATS HELPERS =====================
 
 local function formatStatValue(valueObj)
 	if valueObj:IsA("IntValue") or valueObj:IsA("NumberValue") then
@@ -108,8 +141,6 @@ local function getPrimaryStat(plr)
 	return nil
 end
 
--- ===================== HELPERS =====================
-
 local function loadAvatarThumbnail(imageObject, userId, thumbnailType, thumbnailSize)
 	task.spawn(function()
 		for attempt = 1, 3 do
@@ -125,148 +156,13 @@ local function loadAvatarThumbnail(imageObject, userId, thumbnailType, thumbnail
 	end)
 end
 
-local function buildMenuIcon(kind)
-	local box = Instance.new("Frame")
-	box.BackgroundTransparency = 1
-	box.Size = UDim2.new(0, 24, 0, 24)
-	box.ZIndex = 22
+print("[Parte 1] BLOQUEIO E CONFIGURAÇÃO CARREGADA")
 
-	if kind == "friend" then
-		local vBar = Instance.new("Frame")
-		vBar.AnchorPoint = Vector2.new(0.5, 0.5)
-		vBar.Position = UDim2.new(0.5, 0, 0.5, 0)
-		vBar.Size = UDim2.new(0, 3, 0, 15)
-		vBar.BackgroundColor3 = ACCENT_COLOR
-		vBar.BorderSizePixel = 0
-		vBar.ZIndex = 22
-		vBar.Parent = box
-		local vCorner = Instance.new("UICorner")
-		vCorner.CornerRadius = UDim.new(1, 0)
-		vCorner.Parent = vBar
-
-		local hBar = vBar:Clone()
-		hBar.Size = UDim2.new(0, 15, 0, 3)
-		hBar.Parent = box
-
-	elseif kind == "examine" then
-		local ring = Instance.new("Frame")
-		ring.Position = UDim2.new(0, 2, 0, 2)
-		ring.Size = UDim2.new(0, 13, 0, 13)
-		ring.BackgroundTransparency = 1
-		ring.ZIndex = 22
-		ring.Parent = box
-		local ringCorner = Instance.new("UICorner")
-		ringCorner.CornerRadius = UDim.new(1, 0)
-		ringCorner.Parent = ring
-		local ringStroke = Instance.new("UIStroke")
-		ringStroke.Thickness = 2
-		ringStroke.Color = Color3.fromRGB(230, 230, 230)
-		ringStroke.Parent = ring
-
-		local handle = Instance.new("Frame")
-		handle.AnchorPoint = Vector2.new(0.5, 0.5)
-		handle.Position = UDim2.new(0, 17, 0, 17)
-		handle.Size = UDim2.new(0, 2, 0, 9)
-		handle.Rotation = 45
-		handle.BackgroundColor3 = Color3.fromRGB(230, 230, 230)
-		handle.BorderSizePixel = 0
-		handle.ZIndex = 22
-		handle.Parent = box
-
-	elseif kind == "block" then
-		local ring = Instance.new("Frame")
-		ring.Position = UDim2.new(0, 1, 0, 1)
-		ring.Size = UDim2.new(0, 20, 0, 20)
-		ring.BackgroundTransparency = 1
-		ring.ZIndex = 22
-		ring.Parent = box
-		local ringCorner = Instance.new("UICorner")
-		ringCorner.CornerRadius = UDim.new(1, 0)
-		ringCorner.Parent = ring
-		local ringStroke = Instance.new("UIStroke")
-		ringStroke.Thickness = 2
-		ringStroke.Color = Color3.fromRGB(230, 90, 90)
-		ringStroke.Parent = ring
-
-		local diag = Instance.new("Frame")
-		diag.AnchorPoint = Vector2.new(0.5, 0.5)
-		diag.Position = UDim2.new(0.5, 0, 0.5, 0)
-		diag.Size = UDim2.new(0, 2, 0, 20)
-		diag.Rotation = 45
-		diag.BackgroundColor3 = Color3.fromRGB(230, 90, 90)
-		diag.BorderSizePixel = 0
-		diag.ZIndex = 22
-		diag.Parent = box
-
-	elseif kind == "report" then
-		local pole = Instance.new("Frame")
-		pole.Position = UDim2.new(0, 6, 0, 1)
-		pole.Size = UDim2.new(0, 2, 0, 21)
-		pole.BackgroundColor3 = Color3.fromRGB(230, 230, 230)
-		pole.BorderSizePixel = 0
-		pole.ZIndex = 22
-		pole.Parent = box
-
-		local flag = Instance.new("Frame")
-		flag.Position = UDim2.new(0, 8, 0, 2)
-		flag.Size = UDim2.new(0, 13, 0, 9)
-		flag.BackgroundColor3 = Color3.fromRGB(235, 160, 60)
-		flag.BorderSizePixel = 0
-		flag.ZIndex = 22
-		flag.Parent = box
-		local flagCorner = Instance.new("UICorner")
-		flagCorner.CornerRadius = UDim.new(0, 2)
-		flagCorner.Parent = flag
-	end
-
-	return box
-end
-
-local function buildFriendStar()
-	local badge = Instance.new("Frame")
-	badge.Name = "FriendStar"
-	badge.AnchorPoint = Vector2.new(1, 1)
-	badge.Position = UDim2.new(1, 3, 1, 3)
-	badge.Size = UDim2.new(0, 14, 0, 14)
-	badge.BackgroundColor3 = Color3.fromRGB(80, 200, 120)
-	badge.BorderSizePixel = 0
-	badge.ZIndex = 5
-	badge.Parent = nil
-
-	local badgeCorner = Instance.new("UICorner")
-	badgeCorner.CornerRadius = UDim.new(1, 0)
-	badgeCorner.Parent = badge
-
-	local ringStroke = Instance.new("UIStroke")
-	ringStroke.Thickness = 1.5
-	ringStroke.Color = BG_COLOR_TOP
-	ringStroke.Parent = badge
-
-	local checkShort = Instance.new("Frame")
-	checkShort.AnchorPoint = Vector2.new(0.5, 0.5)
-	checkShort.Position = UDim2.new(0.35, 0, 0.55, 0)
-	checkShort.Size = UDim2.new(0, 2, 0, 5)
-	checkShort.Rotation = 45
-	checkShort.BackgroundColor3 = Color3.fromRGB(20, 55, 35)
-	checkShort.BorderSizePixel = 0
-	checkShort.ZIndex = 6
-	checkShort.Parent = badge
-
-	local checkLong = Instance.new("Frame")
-	checkLong.AnchorPoint = Vector2.new(0.5, 0.5)
-	checkLong.Position = UDim2.new(0.58, 0, 0.42, 0)
-	checkLong.Size = UDim2.new(0, 2, 0, 9)
-	checkLong.Rotation = -45
-	checkLong.BackgroundColor3 = Color3.fromRGB(20, 55, 35)
-	checkLong.BorderSizePixel = 0
-	checkLong.ZIndex = 6
-	checkLong.Parent = badge
-
-	return badge
-end
+--[[
+	CustomPlayerList.lua - Parte 2: GUI PRINCIPAL E LISTA DE JOGADORES
+]]
 
 -- ===================== BASE GUI =====================
-
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "CustomPlayerList"
 screenGui.ResetOnSpawn = false
@@ -277,8 +173,8 @@ screenGui.Parent = player:WaitForChild("PlayerGui")
 local shadow = Instance.new("ImageLabel")
 shadow.Name = "Shadow"
 shadow.AnchorPoint = Vector2.new(1, 0)
-shadow.Position = UDim2.new(1, 6, 0, 30)
-shadow.Size = UDim2.new(0, 260, 0, 340)
+shadow.Position = UDim2.new(1, -10, 0, 10)
+shadow.Size = UDim2.new(0, 240, 0, 34)
 shadow.BackgroundTransparency = 1
 shadow.Image = SHADOW_IMAGE
 shadow.ImageColor3 = Color3.new(0, 0, 0)
@@ -326,7 +222,6 @@ topHighlight.BorderSizePixel = 0
 topHighlight.Parent = mainFrame
 
 -- ===================== TITULO =====================
-
 local titleBar = Instance.new("Frame")
 titleBar.Name = "TitleBar"
 titleBar.Size = UDim2.new(1, 0, 0, 34)
@@ -387,7 +282,6 @@ task.spawn(function()
 end)
 
 -- ===================== LISTA (CONTAINER) =====================
-
 local container = Instance.new("ScrollingFrame")
 container.Name = "Container"
 container.Position = UDim2.new(0, 8, 0, 40)
@@ -405,8 +299,138 @@ listLayout.Padding = UDim.new(0, 6)
 listLayout.SortOrder = Enum.SortOrder.LayoutOrder
 listLayout.Parent = container
 
--- ===================== ROW POR JOGADOR =====================
+-- ===================== ICONES DO MENU =====================
+local function buildMenuIcon(kind)
+	local box = Instance.new("Frame")
+	box.BackgroundTransparency = 1
+	box.Size = UDim2.new(0, 24, 0, 24)
+	box.ZIndex = 22
 
+	if kind == "friend" then
+		local vBar = Instance.new("Frame")
+		vBar.AnchorPoint = Vector2.new(0.5, 0.5)
+		vBar.Position = UDim2.new(0.5, 0, 0.5, 0)
+		vBar.Size = UDim2.new(0, 3, 0, 15)
+		vBar.BackgroundColor3 = ACCENT_COLOR
+		vBar.BorderSizePixel = 0
+		vBar.ZIndex = 22
+		vBar.Parent = box
+		local vCorner = Instance.new("UICorner")
+		vCorner.CornerRadius = UDim.new(1, 0)
+		vCorner.Parent = vBar
+		local hBar = vBar:Clone()
+		hBar.Size = UDim2.new(0, 15, 0, 3)
+		hBar.Parent = box
+
+	elseif kind == "examine" then
+		local ring = Instance.new("Frame")
+		ring.Position = UDim2.new(0, 2, 0, 2)
+		ring.Size = UDim2.new(0, 13, 0, 13)
+		ring.BackgroundTransparency = 1
+		ring.ZIndex = 22
+		ring.Parent = box
+		local ringCorner = Instance.new("UICorner")
+		ringCorner.CornerRadius = UDim.new(1, 0)
+		ringCorner.Parent = ring
+		local ringStroke = Instance.new("UIStroke")
+		ringStroke.Thickness = 2
+		ringStroke.Color = Color3.fromRGB(230, 230, 230)
+		ringStroke.Parent = ring
+		local handle = Instance.new("Frame")
+		handle.AnchorPoint = Vector2.new(0.5, 0.5)
+		handle.Position = UDim2.new(0, 17, 0, 17)
+		handle.Size = UDim2.new(0, 2, 0, 9)
+		handle.Rotation = 45
+		handle.BackgroundColor3 = Color3.fromRGB(230, 230, 230)
+		handle.BorderSizePixel = 0
+		handle.ZIndex = 22
+		handle.Parent = box
+
+	elseif kind == "block" then
+		local ring = Instance.new("Frame")
+		ring.Position = UDim2.new(0, 1, 0, 1)
+		ring.Size = UDim2.new(0, 20, 0, 20)
+		ring.BackgroundTransparency = 1
+		ring.ZIndex = 22
+		ring.Parent = box
+		local ringCorner = Instance.new("UICorner")
+		ringCorner.CornerRadius = UDim.new(1, 0)
+		ringCorner.Parent = ring
+		local ringStroke = Instance.new("UIStroke")
+		ringStroke.Thickness = 2
+		ringStroke.Color = Color3.fromRGB(230, 90, 90)
+		ringStroke.Parent = ring
+		local diag = Instance.new("Frame")
+		diag.AnchorPoint = Vector2.new(0.5, 0.5)
+		diag.Position = UDim2.new(0.5, 0, 0.5, 0)
+		diag.Size = UDim2.new(0, 2, 0, 20)
+		diag.Rotation = 45
+		diag.BackgroundColor3 = Color3.fromRGB(230, 90, 90)
+		diag.BorderSizePixel = 0
+		diag.ZIndex = 22
+		diag.Parent = box
+
+	elseif kind == "report" then
+		local pole = Instance.new("Frame")
+		pole.Position = UDim2.new(0, 6, 0, 1)
+		pole.Size = UDim2.new(0, 2, 0, 21)
+		pole.BackgroundColor3 = Color3.fromRGB(230, 230, 230)
+		pole.BorderSizePixel = 0
+		pole.ZIndex = 22
+		pole.Parent = box
+		local flag = Instance.new("Frame")
+		flag.Position = UDim2.new(0, 8, 0, 2)
+		flag.Size = UDim2.new(0, 13, 0, 9)
+		flag.BackgroundColor3 = Color3.fromRGB(235, 160, 60)
+		flag.BorderSizePixel = 0
+		flag.ZIndex = 22
+		flag.Parent = box
+		local flagCorner = Instance.new("UICorner")
+		flagCorner.CornerRadius = UDim.new(0, 2)
+		flagCorner.Parent = flag
+	end
+	return box
+end
+
+local function buildFriendStar()
+	local badge = Instance.new("Frame")
+	badge.Name = "FriendStar"
+	badge.AnchorPoint = Vector2.new(1, 1)
+	badge.Position = UDim2.new(1, 3, 1, 3)
+	badge.Size = UDim2.new(0, 14, 0, 14)
+	badge.BackgroundColor3 = Color3.fromRGB(80, 200, 120)
+	badge.BorderSizePixel = 0
+	badge.ZIndex = 5
+	badge.Parent = nil
+	local badgeCorner = Instance.new("UICorner")
+	badgeCorner.CornerRadius = UDim.new(1, 0)
+	badgeCorner.Parent = badge
+	local ringStroke = Instance.new("UIStroke")
+	ringStroke.Thickness = 1.5
+	ringStroke.Color = BG_COLOR_TOP
+	ringStroke.Parent = badge
+	local checkShort = Instance.new("Frame")
+	checkShort.AnchorPoint = Vector2.new(0.5, 0.5)
+	checkShort.Position = UDim2.new(0.35, 0, 0.55, 0)
+	checkShort.Size = UDim2.new(0, 2, 0, 5)
+	checkShort.Rotation = 45
+	checkShort.BackgroundColor3 = Color3.fromRGB(20, 55, 35)
+	checkShort.BorderSizePixel = 0
+	checkShort.ZIndex = 6
+	checkShort.Parent = badge
+	local checkLong = Instance.new("Frame")
+	checkLong.AnchorPoint = Vector2.new(0.5, 0.5)
+	checkLong.Position = UDim2.new(0.58, 0, 0.42, 0)
+	checkLong.Size = UDim2.new(0, 2, 0, 9)
+	checkLong.Rotation = -45
+	checkLong.BackgroundColor3 = Color3.fromRGB(20, 55, 35)
+	checkLong.BorderSizePixel = 0
+	checkLong.ZIndex = 6
+	checkLong.Parent = badge
+	return badge
+end
+
+-- ===================== ROW POR JOGADOR =====================
 local function createPlayerRow(plr, order)
 	local primaryStat = getPrimaryStat(plr)
 	local hasStats = primaryStat ~= nil
@@ -628,8 +652,13 @@ Players.PlayerAdded:Connect(function(plr)
 	end
 end)
 
--- ===================== TOGGLE (TAB) =====================
+print("[Parte 2] GUI PRINCIPAL E LISTA CARREGADA")
 
+--[[
+	CustomPlayerList.lua - Parte 3: TOGGLE DO TAB + POPUPS
+]]
+
+-- ===================== TOGGLE (TAB) =====================
 local isExpanded = false
 local tweening = false
 
@@ -641,25 +670,79 @@ local function setExpanded(expanded)
 	local targetSize = expanded and EXPANDED_SIZE or MINIMIZED_SIZE
 	local targetShadowTransparency = expanded and 0.45 or 1
 
+	-- Esconde/mostra o container para evitar pedaços visíveis ao minimizar
+	if not expanded then
+		container.Visible = false
+	end
+
 	local tween = TweenService:Create(mainFrame, TweenInfo.new(TWEEN_TIME, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Size = targetSize })
-	local shadowTween = TweenService:Create(shadow, TweenInfo.new(TWEEN_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { ImageTransparency = targetShadowTransparency })
+	local shadowTween = TweenService:Create(shadow, TweenInfo.new(TWEEN_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { 
+		ImageTransparency = targetShadowTransparency,
+		Size = targetSize
+	})
 
 	tween:Play()
 	shadowTween:Play()
 	tween.Completed:Connect(function()
 		tweening = false
+		-- Mostra o container apenas depois que a animação de abrir terminar
+		if expanded then
+			container.Visible = true
+		end
 	end)
 end
 
+-- ===================== INPUT DE TAB - 4 METODOS =====================
+-- Metodo 1: InputBegan SEM checar gameProcessedEvent
 UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
-	if gameProcessedEvent then return end
 	if input.KeyCode == Enum.KeyCode.Tab then
 		setExpanded(not isExpanded)
 	end
 end)
 
+-- Metodo 2: InputChanged como backup
+UserInputService.InputChanged:Connect(function(input, gameProcessedEvent)
+	if input.KeyCode == Enum.KeyCode.Tab and input.UserInputState == Enum.UserInputState.Begin then
+		setExpanded(not isExpanded)
+	end
+end)
+
+-- Metodo 3: ContextActionService com prioridade ALTA
+pcall(function()
+	ContextActionService:BindActionAtPriority(
+		"CustomPlayerList_Tab",
+		function(actionName, inputState, inputObj)
+			if inputState == Enum.UserInputState.Begin and inputObj.KeyCode == Enum.KeyCode.Tab then
+				setExpanded(not isExpanded)
+				return Enum.ContextActionResult.Sink
+			end
+			return Enum.ContextActionResult.Pass
+		end,
+		false,
+		Enum.ContextActionPriority.High.Value,
+		Enum.KeyCode.Tab
+	)
+end)
+
+-- Metodo 4: ContextActionService Blocker com prioridade MAIOR
+pcall(function()
+	ContextActionService:BindActionAtPriority(
+		"CustomPlayerList_Tab_Blocker",
+		function(actionName, inputState, inputObj)
+			if inputState == Enum.UserInputState.Begin and inputObj.KeyCode == Enum.KeyCode.Tab then
+				setExpanded(not isExpanded)
+				return Enum.ContextActionResult.Sink
+			end
+			return Enum.ContextActionResult.Pass
+		end,
+		false,
+		Enum.ContextActionPriority.High.Value + 100,
+		Enum.KeyCode.Tab
+	)
+end)
+
 -- ======================================================
---     PERFIL DO JOGADOR (MENU LATERAL, ESTILO NATIVO)
+--     PERFIL DO JOGADOR
 -- ======================================================
 
 local closeCatcher = Instance.new("TextButton")
@@ -754,7 +837,7 @@ divider.BorderSizePixel = 0
 divider.ZIndex = 22
 divider.Parent = profileCard
 
--- ===== SECAO DE STATS COMPLETA NO PERFIL =====
+-- SECAO DE STATS NO PERFIL
 local statsSection = Instance.new("Frame")
 statsSection.Name = "StatsSection"
 statsSection.Position = UDim2.new(0, 12, 0, 66)
@@ -897,7 +980,18 @@ end
 
 openProfilePopup = function(targetPlayer, anchorRow)
 	if targetPlayer == player then return end
-	currentProfileTarget = targetPlayer
+
+	-- Se já estiver com um popup aberto de outro jogador, fecha primeiro
+	if currentProfileTarget and currentProfileTarget ~= targetPlayer then
+		-- Guarda o novo target antes de fechar (closeProfilePopup zera currentProfileTarget)
+		local newTarget = targetPlayer
+		closeProfilePopup()
+		-- Pequeno delay para a animação de fechar antes de abrir o novo
+		task.wait(0.08)
+		currentProfileTarget = newTarget
+	else
+		currentProfileTarget = targetPlayer
+	end
 
 	profileName.Text = targetPlayer.DisplayName
 	profileHandle.Text = "@" .. targetPlayer.Name
@@ -1088,10 +1182,20 @@ aboutItem.MouseButton1Click:Connect(function()
 	openAboutPopup(target)
 end)
 
--- ======================================================
---     ANIMACAO DE TELEPORTE 3D (PORTAL MASTER STYLE)
---     Integrada no botao "Teleport To" do About Popup
--- ======================================================
+inspectItem.MouseButton1Click:Connect(function()
+	if not currentProfileTarget then return end
+	local target = currentProfileTarget
+	closeProfilePopup()
+	pcall(function()
+		GuiService:InspectPlayerFromUserId(target.UserId)
+	end)
+end)
+
+print("[Parte 3] TOGGLE E POPUPS CARREGADOS")
+
+--[[
+	CustomPlayerList.lua - Parte 4: ANIMAÇÃO DE TELEPORTE 3D (Portal Master Style)
+]]
 
 local TELEPORT_SOUND_ID = "rbxassetid://130845581077634"
 
@@ -1101,7 +1205,6 @@ local function playTeleportSound(volume)
 	sound.Volume = volume or 0.9
 	sound.Parent = SoundService
 
-	-- Toca o som APENAS para o jogador local (ninguem mais escuta)
 	local success, err = pcall(function()
 		SoundService:PlayLocalSound(sound)
 	end)
@@ -1221,11 +1324,9 @@ teleportItem.MouseButton1Click:Connect(function()
 
 	isTeleportCooldown = true
 
-	-- SALVA o target ANTES de fechar o popup
 	local target = currentAboutTarget
 	closeAboutPopup()
 
-	-- TOCA O SOM DE TELEPORTE IMEDIATAMENTE
 	playTeleportSound(1)
 
 	local targetChar = target.Character
@@ -1242,22 +1343,14 @@ teleportItem.MouseButton1Click:Connect(function()
 	local targetRoot = targetChar.HumanoidRootPart
 	local myRoot = myChar.HumanoidRootPart
 
-	-- Posicao de saida: atras do alvo
 	local exitPos = targetRoot.CFrame * CFrame.new(0, 0, 3)
 	local startPos = myRoot.CFrame
 
-	-- ===== ANIMACAO DE TELEPORTE PORTAL MASTER =====
-
-	-- 1. Cria portal de entrada (na posicao atual do jogador, em pe)
 	createRealisticPortal(startPos * CFrame.new(0, 8.5, 0), false, 2.5)
-
-	-- 2. Cria portal de saida (na posicao do alvo, em pe)
 	createRealisticPortal(exitPos * CFrame.new(0, 8.5, 0), false, 2.5)
 
-	-- 3. Toca som de teleporte
 	playTeleportSound(1)
 
-	-- 4. Desintegracao do personagem (encolhe e fica invisivel)
 	local originalParts = {}
 	for _, part in pairs(myChar:GetDescendants()) do
 		if part:IsA("BasePart") then
@@ -1274,18 +1367,14 @@ teleportItem.MouseButton1Click:Connect(function()
 		end
 	end
 
-	-- 5. Aguarda animacao de desintegracao
 	task.wait(0.6)
 
-	-- 6. Teleporta para a posicao de saida
 	if targetRoot.Parent and myRoot.Parent then
 		myRoot.CFrame = exitPos
 	end
 
-	-- 7. Aguarda um frame para garantir posicao
 	task.wait(0.1)
 
-	-- 8. Reintegracao do personagem (volta ao tamanho normal e fica visivel)
 	for part, data in pairs(originalParts) do
 		if part and part.Parent then
 			local targetTrans = (part.Name == "HumanoidRootPart") and 1 or data.Trans
@@ -1301,7 +1390,6 @@ teleportItem.MouseButton1Click:Connect(function()
 		end
 	end
 
-	-- 9. Libera cooldown
 	task.delay(1.5, function()
 		isTeleportCooldown = false
 	end)
@@ -1341,18 +1429,11 @@ spectateItem.MouseButton1Click:Connect(function()
 	end
 end)
 
-inspectItem.MouseButton1Click:Connect(function()
-	if not currentProfileTarget then return end
-	local target = currentProfileTarget
-	closeProfilePopup()
-	pcall(function()
-		GuiService:InspectPlayerFromUserId(target.UserId)
-	end)
-end)
+print("[Parte 4] ANIMAÇÃO DE TELEPORTE CARREGADA")
 
--- ======================================================
---        NOTIFICACAO DE STATUS DE AMIZADE
--- ======================================================
+--[[
+	CustomPlayerList.lua - Parte 5: NOTIFICAÇÕES DE AMIZADE
+]]
 
 local NOTIFICATION_SOUND_POSITIVE_ID = "rbxassetid://6518811702"
 local NOTIFICATION_SOUND_NEGATIVE_ID = "rbxassetid://9046485535"
@@ -1460,7 +1541,7 @@ end)
 Players.PlayerRemoving:Connect(function(leavingPlayer)
 	if leavingPlayer == player then return end
 	if checkIsFriend(leavingPlayer) then
-		task.spawn(function() showFriendNotification(leavingPlayer, "leave") end)
+		 task.spawn(function() showFriendNotification(leavingPlayer, "leave") end)
 	end
 	friendCache[leavingPlayer.UserId] = nil
 end)
@@ -1488,3 +1569,6 @@ task.spawn(function()
 		end
 	end
 end)
+
+print("[Parte 5] NOTIFICAÇÕES DE AMIZADE CARREGADAS")
+print("=== CUSTOM PLAYER LIST - TUDO CARREGADO ===")
