@@ -1,6 +1,1340 @@
 --[[
-	CustomPlayerList.lua - Parte 1: BLOQUEIO E CONFIGURAÇÃO
-	Feito por PeterCoe
+    SpeedGUI + CustomPlayerList + Anti-AFK - Combo Script
+    Carrega os 3 scripts em paralelo.
+
+    Botões no canto superior direito (da direita pra esquerda):
+    🎙️ Mic  |  🔄 Rejoin  |  💤 Anti-AFK
+
+    Anti-AFK: clique no 💤 para ativar/desativar.
+    Quando ativo, aparece "Anti-AFK Ativo" no canto inferior da tela.
+
+    Como usar: cole no seu executor / LocalScript.
+]]
+
+-- ================= CARREGAR SPEEDGUI =================
+task.spawn(function()
+--[[
+    SpeedGUI - by Claude
+    GUI moderno com aba discreta no canto esquerdo da tela.
+    Contém: Speed (toggle + slider), Noclip (toggle), Fly (toggle + slider), Walk on Water (toggle) e Music ID (play/stop).
+
+    Como usar: cole no seu executor / LocalScript.
+]]
+
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+
+local LocalPlayer = Players.LocalPlayer
+
+-- ================= CONFIG =================
+local CONFIG = {
+    MinSpeed = 16,
+    MaxSpeed = 200,
+    DefaultSpeed = 50,
+    MinFlySpeed = 10,
+    MaxFlySpeed = 200,
+    DefaultFlySpeed = 60,
+    Accent = Color3.fromRGB(124, 92, 255),
+    AccentLight = Color3.fromRGB(168, 140, 255),
+    Background = Color3.fromRGB(18, 18, 24),
+    Card = Color3.fromRGB(26, 26, 34),
+    CardLight = Color3.fromRGB(34, 34, 44),
+    Text = Color3.fromRGB(240, 240, 248),
+    SubText = Color3.fromRGB(140, 140, 155),
+    Switch = Color3.fromRGB(52, 52, 62),
+}
+
+local PANEL_WIDTH = 268
+
+-- ================= STATE =================
+local speedEnabled = false
+local noclipEnabled = false
+local waterEnabled = false
+local flyEnabled = false
+local currentSpeed = CONFIG.DefaultSpeed
+local currentFlySpeed = CONFIG.DefaultFlySpeed
+local defaultWalkSpeed = 16
+local isOpen = false
+
+-- ================= HELPERS =================
+local function create(className, props, children)
+    local inst = Instance.new(className)
+    for k, v in pairs(props or {}) do
+        inst[k] = v
+    end
+    for _, child in ipairs(children or {}) do
+        child.Parent = inst
+    end
+    return inst
+end
+
+local function tween(obj, props, time, style, dir)
+    local t = TweenService:Create(obj, TweenInfo.new(time or 0.22, style or Enum.EasingStyle.Quad, dir or Enum.EasingDirection.Out), props)
+    t:Play()
+    return t
+end
+
+-- Som de clique reutilizável
+local ClickSound = create("Sound", {
+    Name = "SpeedGUI_ClickSound",
+    SoundId = "rbxassetid://876939830",
+    Volume = 0.5,
+    PlaybackSpeed = 1,
+})
+
+local function playClick()
+    pcall(function()
+        ClickSound:Play()
+    end)
+end
+
+-- Efeito de hover + clique num botão (leve escala + clareamento de cor)
+local function addButtonFeel(button, baseColor, hoverColor)
+    button.MouseEnter:Connect(function()
+        tween(button, { BackgroundColor3 = hoverColor or baseColor }, 0.15)
+    end)
+    button.MouseLeave:Connect(function()
+        tween(button, { BackgroundColor3 = baseColor }, 0.15)
+    end)
+    button.MouseButton1Down:Connect(function()
+        playClick()
+        tween(button, { Size = UDim2.new(button.Size.X.Scale, button.Size.X.Offset - 2, button.Size.Y.Scale, button.Size.Y.Offset - 2) }, 0.08)
+    end)
+    button.MouseButton1Up:Connect(function()
+        tween(button, { Size = UDim2.new(button.Size.X.Scale, button.Size.X.Offset + 2, button.Size.Y.Scale, button.Size.Y.Offset + 2) }, 0.08)
+    end)
+end
+
+local function applySpeed()
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then return end
+    hum.WalkSpeed = speedEnabled and currentSpeed or defaultWalkSpeed
+end
+
+-- ================= GUI ROOT =================
+local ScreenGui = create("ScreenGui", {
+    Name = "SpeedGUI",
+    ResetOnSpawn = false,
+    ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+    IgnoreGuiInset = true,
+})
+
+local ok = pcall(function()
+    ScreenGui.Parent = game:GetService("CoreGui")
+end)
+if not ok then
+    ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+end
+
+-- ============ MINIMIZED TAB (canto esquerdo, discreto) ============
+local MinimizedTab = create("TextButton", {
+    Name = "MinimizedTab",
+    Parent = ScreenGui,
+    Size = UDim2.new(0, 5, 0, 90),
+    AnchorPoint = Vector2.new(0, 0.5),
+    Position = UDim2.new(0, 0, 0.5, 0),
+    BackgroundColor3 = CONFIG.Accent,
+    BackgroundTransparency = 0.35,
+    AutoButtonColor = false,
+    Text = "",
+    ZIndex = 10,
+}, {
+    create("UICorner", { CornerRadius = UDim.new(0, 6) }),
+})
+
+MinimizedTab.MouseEnter:Connect(function()
+    tween(MinimizedTab, { BackgroundTransparency = 0.05, Size = UDim2.new(0, 7, 0, 100) }, 0.15)
+end)
+MinimizedTab.MouseLeave:Connect(function()
+    tween(MinimizedTab, { BackgroundTransparency = 0.35, Size = UDim2.new(0, 5, 0, 90) }, 0.15)
+end)
+
+-- ============ MAIN PANEL (desliza a partir da esquerda) ============
+local PANEL_HEIGHT = 654
+
+local PANEL_OPEN_POS = UDim2.new(0, 14, 0.5, -PANEL_HEIGHT / 2)
+local PANEL_CLOSED_POS = UDim2.new(0, -PANEL_WIDTH - 30, 0.5, -PANEL_HEIGHT / 2)
+
+local MainFrame = create("Frame", {
+    Name = "MainFrame",
+    Parent = ScreenGui,
+    Size = UDim2.new(0, PANEL_WIDTH, 0, PANEL_HEIGHT),
+    Position = PANEL_CLOSED_POS,
+    BackgroundColor3 = CONFIG.Background,
+    Visible = false,
+    ClipsDescendants = true,
+}, {
+    create("UICorner", { CornerRadius = UDim.new(0, 16) }),
+    create("UIStroke", { Color = CONFIG.Accent, Thickness = 1, Transparency = 0.55 }),
+})
+
+-- ============ LIBRARY PANEL (biblioteca de músicas) ============
+local LIBRARY_WIDTH = 200
+local LIBRARY_HEIGHT = 340
+local LIBRARY_OPEN_X = PANEL_OPEN_POS.X.Offset + PANEL_WIDTH + 14
+local LIBRARY_CLOSED_X = LIBRARY_OPEN_X + 40
+
+local LibraryFrame = create("Frame", {
+    Name = "LibraryFrame",
+    Parent = ScreenGui,
+    Size = UDim2.new(0, LIBRARY_WIDTH, 0, LIBRARY_HEIGHT),
+    Position = UDim2.new(0, LIBRARY_CLOSED_X, 0.5, -LIBRARY_HEIGHT / 2),
+    BackgroundColor3 = CONFIG.Background,
+    BackgroundTransparency = 1,
+    Visible = false,
+    ClipsDescendants = true,
+}, {
+    create("UICorner", { CornerRadius = UDim.new(0, 16) }),
+    create("UIStroke", { Color = CONFIG.Accent, Thickness = 1, Transparency = 0.55 }),
+})
+
+create("TextLabel", {
+    Parent = LibraryFrame,
+    Size = UDim2.new(1, -28, 0, 20),
+    Position = UDim2.new(0, 14, 0, 14),
+    BackgroundTransparency = 1,
+    Text = "🎶 Biblioteca",
+    TextColor3 = CONFIG.Text,
+    Font = Enum.Font.GothamBold,
+    TextSize = 15,
+    TextXAlignment = Enum.TextXAlignment.Left,
+})
+
+create("TextLabel", {
+    Parent = LibraryFrame,
+    Size = UDim2.new(1, -28, 0, 14),
+    Position = UDim2.new(0, 14, 0, 34),
+    BackgroundTransparency = 1,
+    Text = "IDs já tocados",
+    TextColor3 = CONFIG.SubText,
+    Font = Enum.Font.Gotham,
+    TextSize = 11,
+    TextXAlignment = Enum.TextXAlignment.Left,
+})
+
+local LibraryEmptyLabel = create("TextLabel", {
+    Parent = LibraryFrame,
+    Size = UDim2.new(1, -28, 0, 40),
+    Position = UDim2.new(0, 14, 0, 70),
+    BackgroundTransparency = 1,
+    Text = "Nenhuma música tocada ainda.",
+    TextColor3 = CONFIG.SubText,
+    Font = Enum.Font.Gotham,
+    TextSize = 12,
+    TextWrapped = true,
+    TextXAlignment = Enum.TextXAlignment.Left,
+})
+
+local LibraryList = create("ScrollingFrame", {
+    Name = "LibraryList",
+    Parent = LibraryFrame,
+    Size = UDim2.new(1, -20, 1, -66),
+    Position = UDim2.new(0, 10, 0, 58),
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    ScrollBarThickness = 4,
+    ScrollBarImageColor3 = CONFIG.Accent,
+    CanvasSize = UDim2.new(0, 0, 0, 0),
+    AutomaticCanvasSize = Enum.AutomaticSize.Y,
+}, {
+    create("UIListLayout", {
+        Padding = UDim.new(0, 6),
+        SortOrder = Enum.SortOrder.LayoutOrder,
+    }),
+})
+
+-- ============ HEADER ============
+local Header = create("Frame", {
+    Name = "Header",
+    Parent = MainFrame,
+    Size = UDim2.new(1, 0, 0, 56),
+    BackgroundColor3 = CONFIG.Card,
+}, {
+    create("UICorner", { CornerRadius = UDim.new(0, 16) }),
+})
+
+-- cobre o corner de baixo do header pra ficar reto (emenda com o corpo do painel)
+create("Frame", {
+    Parent = Header,
+    Size = UDim2.new(1, 0, 0, 16),
+    Position = UDim2.new(0, 0, 1, -16),
+    BackgroundColor3 = CONFIG.Card,
+    BorderSizePixel = 0,
+    ZIndex = 0,
+})
+
+create("UIGradient", {
+    Parent = Header,
+    Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, CONFIG.Accent),
+        ColorSequenceKeypoint.new(1, CONFIG.Card),
+    }),
+    Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.75),
+        NumberSequenceKeypoint.new(1, 1),
+    }),
+    Rotation = 0,
+})
+
+create("TextLabel", {
+    Parent = Header,
+    Size = UDim2.new(1, -60, 0, 20),
+    Position = UDim2.new(0, 18, 0, 10),
+    BackgroundTransparency = 1,
+    Text = "Script Hub",
+    TextColor3 = CONFIG.Text,
+    Font = Enum.Font.GothamBold,
+    TextSize = 16,
+    TextXAlignment = Enum.TextXAlignment.Left,
+})
+
+create("TextLabel", {
+    Parent = Header,
+    Size = UDim2.new(1, -60, 0, 16),
+    Position = UDim2.new(0, 18, 0, 30),
+    BackgroundTransparency = 1,
+    Text = "painel de controle",
+    TextColor3 = CONFIG.SubText,
+    Font = Enum.Font.Gotham,
+    TextSize = 11,
+    TextXAlignment = Enum.TextXAlignment.Left,
+})
+
+local CloseBtn = create("TextButton", {
+    Parent = Header,
+    Size = UDim2.new(0, 28, 0, 28),
+    Position = UDim2.new(1, -42, 0.5, -14),
+    BackgroundColor3 = CONFIG.CardLight,
+    Text = "‹",
+    TextColor3 = CONFIG.Text,
+    Font = Enum.Font.GothamBold,
+    TextSize = 18,
+    AutoButtonColor = false,
+}, {
+    create("UICorner", { CornerRadius = UDim.new(0, 8) }),
+})
+addButtonFeel(CloseBtn, CONFIG.CardLight, CONFIG.Switch)
+
+-- ============ REUSABLE: TOGGLE SWITCH ============
+local function createToggle(parent, position)
+    local bg = create("Frame", {
+        Parent = parent,
+        Size = UDim2.new(0, 44, 0, 24),
+        Position = position,
+        AnchorPoint = Vector2.new(1, 0.5),
+        BackgroundColor3 = CONFIG.Switch,
+    }, {
+        create("UICorner", { CornerRadius = UDim.new(1, 0) }),
+    })
+
+    local dot = create("Frame", {
+        Parent = bg,
+        Size = UDim2.new(0, 18, 0, 18),
+        Position = UDim2.new(0, 3, 0.5, -9),
+        BackgroundColor3 = Color3.fromRGB(235, 235, 240),
+    }, {
+        create("UICorner", { CornerRadius = UDim.new(1, 0) }),
+    })
+
+    local button = create("TextButton", {
+        Parent = bg,
+        Size = UDim2.new(1, 0, 1, 0),
+        BackgroundTransparency = 1,
+        Text = "",
+    })
+
+    button.MouseButton1Down:Connect(function()
+        playClick()
+    end)
+
+    local function setVisual(state)
+        if state then
+            tween(bg, { BackgroundColor3 = CONFIG.Accent }, 0.18)
+            tween(dot, { Position = UDim2.new(1, -21, 0.5, -9) }, 0.18)
+        else
+            tween(bg, { BackgroundColor3 = CONFIG.Switch }, 0.18)
+            tween(dot, { Position = UDim2.new(0, 3, 0.5, -9) }, 0.18)
+        end
+    end
+
+    return button, setVisual
+end
+
+-- ============ REUSABLE: CARD ============
+local function createCard(y, height)
+    return create("Frame", {
+        Parent = MainFrame,
+        Size = UDim2.new(1, -28, 0, height),
+        Position = UDim2.new(0, 14, 0, y),
+        BackgroundColor3 = CONFIG.Card,
+        BackgroundTransparency = 1,
+    }, {
+        create("UICorner", { CornerRadius = UDim.new(0, 12) }),
+    })
+end
+
+-- ============ REUSABLE: SLIDER ============
+local function createSlider(parent, yPos, minVal, maxVal, defaultVal, labelText)
+    local sliderLabel = create("TextLabel", {
+        Parent = parent,
+        Size = UDim2.new(1, -28, 0, 16),
+        Position = UDim2.new(0, 14, 0, yPos),
+        BackgroundTransparency = 1,
+        Text = labelText .. defaultVal,
+        TextColor3 = CONFIG.SubText,
+        Font = Enum.Font.Gotham,
+        TextSize = 12,
+        TextXAlignment = Enum.TextXAlignment.Left,
+    })
+
+    local sliderBarBG = create("Frame", {
+        Parent = parent,
+        Size = UDim2.new(1, -28, 0, 8),
+        Position = UDim2.new(0, 14, 0, yPos + 26),
+        BackgroundColor3 = CONFIG.Switch,
+    }, {
+        create("UICorner", { CornerRadius = UDim.new(1, 0) }),
+    })
+
+    local function valToAlpha(val)
+        return (val - minVal) / (maxVal - minVal)
+    end
+
+    local sliderFill = create("Frame", {
+        Parent = sliderBarBG,
+        Size = UDim2.new(valToAlpha(defaultVal), 0, 1, 0),
+        BackgroundColor3 = CONFIG.Accent,
+    }, {
+        create("UICorner", { CornerRadius = UDim.new(1, 0) }),
+        create("UIGradient", {
+            Color = ColorSequence.new({
+                ColorSequenceKeypoint.new(0, CONFIG.Accent),
+                ColorSequenceKeypoint.new(1, CONFIG.AccentLight),
+            }),
+        }),
+    })
+
+    local sliderKnob = create("Frame", {
+        Parent = sliderBarBG,
+        Size = UDim2.new(0, 14, 0, 14),
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.new(valToAlpha(defaultVal), 0, 0.5, 0),
+        BackgroundColor3 = Color3.new(1, 1, 1),
+        ZIndex = 5,
+    }, {
+        create("UICorner", { CornerRadius = UDim.new(1, 0) }),
+        create("UIStroke", { Color = CONFIG.Accent, Thickness = 2 }),
+    })
+
+    local sliderInput = create("TextButton", {
+        Parent = sliderBarBG,
+        Size = UDim2.new(1, 0, 1, 20),
+        Position = UDim2.new(0, 0, 0.5, -10),
+        BackgroundTransparency = 1,
+        Text = "",
+        ZIndex = 6,
+    })
+
+    create("TextLabel", {
+        Parent = parent,
+        Size = UDim2.new(1, -28, 0, 14),
+        Position = UDim2.new(0, 14, 0, yPos + 44),
+        BackgroundTransparency = 1,
+        Text = minVal .. "                                              " .. maxVal,
+        TextColor3 = CONFIG.SubText,
+        Font = Enum.Font.Gotham,
+        TextSize = 10,
+        TextXAlignment = Enum.TextXAlignment.Left,
+    })
+
+    return {
+        Label = sliderLabel,
+        BarBG = sliderBarBG,
+        Fill = sliderFill,
+        Knob = sliderKnob,
+        Input = sliderInput,
+        valToAlpha = valToAlpha,
+        minVal = minVal,
+        maxVal = maxVal,
+    }
+end
+
+-- ============ CARD: SPEED ============
+local SpeedCard = createCard(70, 128)
+
+create("TextLabel", {
+    Parent = SpeedCard,
+    Size = UDim2.new(1, -70, 0, 20),
+    Position = UDim2.new(0, 14, 0, 12),
+    BackgroundTransparency = 1,
+    Text = "⚡  Speed",
+    TextColor3 = CONFIG.Text,
+    Font = Enum.Font.GothamBold,
+    TextSize = 14,
+    TextXAlignment = Enum.TextXAlignment.Left,
+})
+
+local SpeedToggleButton, setSpeedVisual = createToggle(SpeedCard, UDim2.new(1, -14, 0, 24))
+
+local SliderLabel = create("TextLabel", {
+    Parent = SpeedCard,
+    Size = UDim2.new(1, -28, 0, 16),
+    Position = UDim2.new(0, 14, 0, 46),
+    BackgroundTransparency = 1,
+    Text = "Velocidade: " .. currentSpeed,
+    TextColor3 = CONFIG.SubText,
+    Font = Enum.Font.Gotham,
+    TextSize = 12,
+    TextXAlignment = Enum.TextXAlignment.Left,
+})
+
+local SliderBarBG = create("Frame", {
+    Parent = SpeedCard,
+    Size = UDim2.new(1, -28, 0, 8),
+    Position = UDim2.new(0, 14, 0, 72),
+    BackgroundColor3 = CONFIG.Switch,
+}, {
+    create("UICorner", { CornerRadius = UDim.new(1, 0) }),
+})
+
+local function speedToAlpha(speed)
+    return (speed - CONFIG.MinSpeed) / (CONFIG.MaxSpeed - CONFIG.MinSpeed)
+end
+
+local SliderFill = create("Frame", {
+    Parent = SliderBarBG,
+    Size = UDim2.new(speedToAlpha(currentSpeed), 0, 1, 0),
+    BackgroundColor3 = CONFIG.Accent,
+}, {
+    create("UICorner", { CornerRadius = UDim.new(1, 0) }),
+    create("UIGradient", {
+        Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, CONFIG.Accent),
+            ColorSequenceKeypoint.new(1, CONFIG.AccentLight),
+        }),
+    }),
+})
+
+local SliderKnob = create("Frame", {
+    Parent = SliderBarBG,
+    Size = UDim2.new(0, 14, 0, 14),
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    Position = UDim2.new(speedToAlpha(currentSpeed), 0, 0.5, 0),
+    BackgroundColor3 = Color3.new(1, 1, 1),
+    ZIndex = 5,
+}, {
+    create("UICorner", { CornerRadius = UDim.new(1, 0) }),
+    create("UIStroke", { Color = CONFIG.Accent, Thickness = 2 }),
+})
+
+local SliderInput = create("TextButton", {
+    Parent = SliderBarBG,
+    Size = UDim2.new(1, 0, 1, 20),
+    Position = UDim2.new(0, 0, 0.5, -10),
+    BackgroundTransparency = 1,
+    Text = "",
+    ZIndex = 6,
+})
+
+create("TextLabel", {
+    Parent = SpeedCard,
+    Size = UDim2.new(1, -28, 0, 14),
+    Position = UDim2.new(0, 14, 0, 90),
+    BackgroundTransparency = 1,
+    Text = CONFIG.MinSpeed .. "                                              " .. CONFIG.MaxSpeed,
+    TextColor3 = CONFIG.SubText,
+    Font = Enum.Font.Gotham,
+    TextSize = 10,
+    TextXAlignment = Enum.TextXAlignment.Left,
+})
+
+-- ============ CARD: NOCLIP ============
+local NoclipCard = createCard(210, 52)
+
+create("TextLabel", {
+    Parent = NoclipCard,
+    Size = UDim2.new(1, -70, 1, 0),
+    Position = UDim2.new(0, 14, 0, 0),
+    BackgroundTransparency = 1,
+    Text = "👻  Noclip",
+    TextColor3 = CONFIG.Text,
+    Font = Enum.Font.GothamBold,
+    TextSize = 14,
+    TextXAlignment = Enum.TextXAlignment.Left,
+})
+
+local NoclipToggleButton, setNoclipVisual = createToggle(NoclipCard, UDim2.new(1, -14, 0.5, 0))
+
+-- ============ CARD: FLY ============
+local FlyCard = createCard(274, 128)
+
+create("TextLabel", {
+    Parent = FlyCard,
+    Size = UDim2.new(1, -70, 0, 20),
+    Position = UDim2.new(0, 14, 0, 12),
+    BackgroundTransparency = 1,
+    Text = "🕊️  Fly",
+    TextColor3 = CONFIG.Text,
+    Font = Enum.Font.GothamBold,
+    TextSize = 14,
+    TextXAlignment = Enum.TextXAlignment.Left,
+})
+
+local FlyToggleButton, setFlyVisual = createToggle(FlyCard, UDim2.new(1, -14, 0, 24))
+
+-- Slider de velocidade do fly
+local FlySlider = createSlider(FlyCard, 46, CONFIG.MinFlySpeed, CONFIG.MaxFlySpeed, CONFIG.DefaultFlySpeed, "Velocidade do Fly: ")
+
+-- ============ CARD: WALK ON WATER ============
+local WaterCard = createCard(416, 52)
+
+create("TextLabel", {
+    Parent = WaterCard,
+    Size = UDim2.new(1, -70, 1, 0),
+    Position = UDim2.new(0, 14, 0, 0),
+    BackgroundTransparency = 1,
+    Text = "🌊  Walk on Water",
+    TextColor3 = CONFIG.Text,
+    Font = Enum.Font.GothamBold,
+    TextSize = 14,
+    TextXAlignment = Enum.TextXAlignment.Left,
+})
+
+local WaterToggleButton, setWaterVisual = createToggle(WaterCard, UDim2.new(1, -14, 0.5, 0))
+
+-- ============ CARD: MUSIC ID ============
+local MusicCard = createCard(480, 180)
+
+local LibraryButton = create("TextButton", {
+    Name = "LibraryButton",
+    Parent = MusicCard,
+    Size = UDim2.new(0, 28, 0, 28),
+    Position = UDim2.new(1, -42, 0, 8),
+    BackgroundColor3 = CONFIG.CardLight,
+    Text = "📚",
+    TextSize = 14,
+    AutoButtonColor = false,
+}, {
+    create("UICorner", { CornerRadius = UDim.new(0, 8) }),
+})
+addButtonFeel(LibraryButton, CONFIG.CardLight, CONFIG.Switch)
+
+create("TextLabel", {
+    Parent = MusicCard,
+    Size = UDim2.new(1, -28, 0, 20),
+    Position = UDim2.new(0, 14, 0, 12),
+    BackgroundTransparency = 1,
+    Text = "🎵  Music ID",
+    TextColor3 = CONFIG.Text,
+    Font = Enum.Font.GothamBold,
+    TextSize = 14,
+    TextXAlignment = Enum.TextXAlignment.Left,
+})
+
+local MusicIdBox = create("TextBox", {
+    Name = "MusicIdBox",
+    Parent = MusicCard,
+    Size = UDim2.new(1, -28, 0, 34),
+    Position = UDim2.new(0, 14, 0, 40),
+    BackgroundColor3 = CONFIG.CardLight,
+    Text = "",
+    PlaceholderText = "Cole o ID aqui...",
+    PlaceholderColor3 = CONFIG.SubText,
+    TextColor3 = CONFIG.Text,
+    Font = Enum.Font.Gotham,
+    TextSize = 13,
+    ClearTextOnFocus = false,
+}, {
+    create("UICorner", { CornerRadius = UDim.new(0, 8) }),
+    create("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10) }),
+})
+
+local BUTTON_GAP = 10
+local BUTTON_WIDTH = (PANEL_WIDTH - 28 - 28 - BUTTON_GAP) / 2
+
+local PlayButton = create("TextButton", {
+    Name = "PlayButton",
+    Parent = MusicCard,
+    Size = UDim2.new(0, BUTTON_WIDTH, 0, 36),
+    Position = UDim2.new(0, 14, 0, 88),
+    BackgroundColor3 = CONFIG.Accent,
+    Text = "▶  Play",
+    TextColor3 = Color3.new(1, 1, 1),
+    Font = Enum.Font.GothamBold,
+    TextSize = 13,
+    AutoButtonColor = false,
+}, {
+    create("UICorner", { CornerRadius = UDim.new(0, 8) }),
+    create("UIGradient", {
+        Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, CONFIG.Accent),
+            ColorSequenceKeypoint.new(1, CONFIG.AccentLight),
+        }),
+    }),
+})
+addButtonFeel(PlayButton, CONFIG.Accent, CONFIG.AccentLight)
+
+local StopButton = create("TextButton", {
+    Name = "StopButton",
+    Parent = MusicCard,
+    Size = UDim2.new(0, BUTTON_WIDTH, 0, 36),
+    Position = UDim2.new(0, 14 + BUTTON_WIDTH + BUTTON_GAP, 0, 88),
+    BackgroundColor3 = CONFIG.CardLight,
+    Text = "■  Stop",
+    TextColor3 = CONFIG.Text,
+    Font = Enum.Font.GothamBold,
+    TextSize = 13,
+    AutoButtonColor = false,
+}, {
+    create("UICorner", { CornerRadius = UDim.new(0, 8) }),
+    create("UIStroke", { Color = CONFIG.Accent, Thickness = 1, Transparency = 0.5 }),
+})
+addButtonFeel(StopButton, CONFIG.CardLight, CONFIG.Switch)
+
+-- Barra de progresso (avançar / voltar na música)
+local CurrentTimeLabel = create("TextLabel", {
+    Parent = MusicCard,
+    Size = UDim2.new(0, 60, 0, 14),
+    Position = UDim2.new(0, 14, 0, 134),
+    BackgroundTransparency = 1,
+    Text = "0:00",
+    TextColor3 = CONFIG.SubText,
+    Font = Enum.Font.Gotham,
+    TextSize = 11,
+    TextXAlignment = Enum.TextXAlignment.Left,
+})
+
+local TotalTimeLabel = create("TextLabel", {
+    Parent = MusicCard,
+    Size = UDim2.new(0, 60, 0, 14),
+    Position = UDim2.new(1, -74, 0, 134),
+    BackgroundTransparency = 1,
+    Text = "0:00",
+    TextColor3 = CONFIG.SubText,
+    Font = Enum.Font.Gotham,
+    TextSize = 11,
+    TextXAlignment = Enum.TextXAlignment.Right,
+})
+
+local ProgressBarBG = create("Frame", {
+    Parent = MusicCard,
+    Size = UDim2.new(1, -28, 0, 8),
+    Position = UDim2.new(0, 14, 0, 152),
+    BackgroundColor3 = CONFIG.Switch,
+}, {
+    create("UICorner", { CornerRadius = UDim.new(1, 0) }),
+})
+
+local ProgressFill = create("Frame", {
+    Parent = ProgressBarBG,
+    Size = UDim2.new(0, 0, 1, 0),
+    BackgroundColor3 = CONFIG.Accent,
+}, {
+    create("UICorner", { CornerRadius = UDim.new(1, 0) }),
+    create("UIGradient", {
+        Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, CONFIG.Accent),
+            ColorSequenceKeypoint.new(1, CONFIG.AccentLight),
+        }),
+    }),
+})
+
+local ProgressKnob = create("Frame", {
+    Parent = ProgressBarBG,
+    Size = UDim2.new(0, 14, 0, 14),
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    Position = UDim2.new(0, 0, 0.5, 0),
+    BackgroundColor3 = Color3.new(1, 1, 1),
+    ZIndex = 5,
+}, {
+    create("UICorner", { CornerRadius = UDim.new(1, 0) }),
+    create("UIStroke", { Color = CONFIG.Accent, Thickness = 2 }),
+})
+
+local ProgressInput = create("TextButton", {
+    Parent = ProgressBarBG,
+    Size = UDim2.new(1, 0, 1, 20),
+    Position = UDim2.new(0, 0, 0.5, -10),
+    BackgroundTransparency = 1,
+    Text = "",
+    ZIndex = 6,
+})
+
+-- ================= LOGIC: MINIMIZE / OPEN =================
+local function setOpen(open)
+    isOpen = open
+    if open then
+        MinimizedTab.Visible = false
+        MainFrame.Visible = true
+        MainFrame.Position = PANEL_CLOSED_POS
+        tween(MainFrame, { Position = PANEL_OPEN_POS }, 0.32, Enum.EasingStyle.Back)
+
+        -- Fade-in escalonado dos cards (efeito "stagger")
+        for i, card in ipairs({ SpeedCard, NoclipCard, FlyCard, WaterCard, MusicCard }) do
+            card.BackgroundTransparency = 1
+            task.delay(0.08 * i, function()
+                tween(card, { BackgroundTransparency = 0 }, 0.25)
+            end)
+        end
+    else
+        tween(MainFrame, { Position = PANEL_CLOSED_POS }, 0.22, Enum.EasingStyle.Quad)
+        task.delay(0.22, function()
+            if not isOpen then
+                MainFrame.Visible = false
+                MinimizedTab.Visible = true
+            end
+        end)
+    end
+end
+
+MinimizedTab.MouseButton1Click:Connect(function()
+    setOpen(true)
+end)
+
+CloseBtn.MouseButton1Click:Connect(function()
+    setOpen(false)
+end)
+
+-- ================= LOGIC: SPEED TOGGLE =================
+local function setSpeedToggle(state)
+    speedEnabled = state
+    setSpeedVisual(state)
+    applySpeed()
+end
+
+SpeedToggleButton.MouseButton1Click:Connect(function()
+    setSpeedToggle(not speedEnabled)
+end)
+
+-- ================= LOGIC: NOCLIP =================
+local noclipConnection = nil
+
+local function setNoclip(state)
+    noclipEnabled = state
+    setNoclipVisual(state)
+
+    if noclipConnection then
+        noclipConnection:Disconnect()
+        noclipConnection = nil
+    end
+
+    if state then
+        noclipConnection = RunService.Stepped:Connect(function()
+            local char = LocalPlayer.Character
+            if not char then return end
+            for _, part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart") and part.CanCollide then
+                    part.CanCollide = false
+                end
+            end
+        end)
+    end
+end
+
+NoclipToggleButton.MouseButton1Click:Connect(function()
+    setNoclip(not noclipEnabled)
+end)
+
+LocalPlayer.CharacterAdded:Connect(function(char)
+    if noclipEnabled then
+        task.wait(0.5)
+        for _, part in ipairs(char:GetDescendants()) do
+            if part:IsA("BasePart") then
+                part.CanCollide = false
+            end
+        end
+    end
+end)
+
+-- ================= LOGIC: FLY =================
+local flyConnection = nil
+local flyBodyVelocity = nil
+local flyBodyGyro = nil
+
+local function cleanupFly()
+    if flyConnection then
+        flyConnection:Disconnect()
+        flyConnection = nil
+    end
+    if flyBodyVelocity then
+        flyBodyVelocity:Destroy()
+        flyBodyVelocity = nil
+    end
+    if flyBodyGyro then
+        flyBodyGyro:Destroy()
+        flyBodyGyro = nil
+    end
+end
+
+local function setFly(state)
+    flyEnabled = state
+    setFlyVisual(state)
+
+    local char = LocalPlayer.Character
+    if not char then return end
+
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local hum = char:FindFirstChildOfClass("Humanoid")
+
+    cleanupFly()
+
+    if not hrp or not hum then return end
+
+    if state then
+        hum.PlatformStand = true
+
+        flyBodyVelocity = create("BodyVelocity", {
+            Parent = hrp,
+            MaxForce = Vector3.new(1e5, 1e5, 1e5),
+            Velocity = Vector3.new(0, 0, 0),
+        })
+
+        flyBodyGyro = create("BodyGyro", {
+            Parent = hrp,
+            MaxTorque = Vector3.new(1e5, 1e5, 1e5),
+            CFrame = hrp.CFrame,
+        })
+
+        flyConnection = RunService.RenderStepped:Connect(function()
+            local camera = workspace.CurrentCamera
+            if not camera then return end
+
+            local moveDir = Vector3.new(0, 0, 0)
+            local camCF = camera.CFrame
+
+            if UserInputService:IsKeyDown(Enum.KeyCode.W) then
+                moveDir = moveDir + camCF.LookVector
+            end
+            if UserInputService:IsKeyDown(Enum.KeyCode.S) then
+                moveDir = moveDir - camCF.LookVector
+            end
+            if UserInputService:IsKeyDown(Enum.KeyCode.A) then
+                moveDir = moveDir - camCF.RightVector
+            end
+            if UserInputService:IsKeyDown(Enum.KeyCode.D) then
+                moveDir = moveDir + camCF.RightVector
+            end
+            if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+                moveDir = moveDir + Vector3.new(0, 1, 0)
+            end
+            if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
+                moveDir = moveDir - Vector3.new(0, 1, 0)
+            end
+
+            if moveDir.Magnitude > 0 then
+                moveDir = moveDir.Unit * currentFlySpeed
+            end
+
+            if flyBodyVelocity and flyBodyVelocity.Parent then
+                flyBodyVelocity.Velocity = moveDir
+            end
+            if flyBodyGyro and flyBodyGyro.Parent then
+                flyBodyGyro.CFrame = CFrame.new(hrp.Position, hrp.Position + camCF.LookVector)
+            end
+        end)
+    else
+        hum.PlatformStand = false
+    end
+end
+
+FlyToggleButton.MouseButton1Click:Connect(function()
+    setFly(not flyEnabled)
+end)
+
+LocalPlayer.CharacterAdded:Connect(function()
+    flyEnabled = false
+    setFlyVisual(false)
+    cleanupFly()
+end)
+
+-- ================= LOGIC: FLY SPEED SLIDER =================
+local draggingFlySlider = false
+
+local function updateFlySliderFromX(inputX)
+    local barPos = FlySlider.BarBG.AbsolutePosition.X
+    local barSize = FlySlider.BarBG.AbsoluteSize.X
+    local alpha = math.clamp((inputX - barPos) / barSize, 0, 1)
+
+    currentFlySpeed = math.floor(CONFIG.MinFlySpeed + (CONFIG.MaxFlySpeed - CONFIG.MinFlySpeed) * alpha)
+    FlySlider.Label.Text = "Velocidade do Fly: " .. currentFlySpeed
+    FlySlider.Fill.Size = UDim2.new(alpha, 0, 1, 0)
+    FlySlider.Knob.Position = UDim2.new(alpha, 0, 0.5, 0)
+end
+
+FlySlider.Input.MouseButton1Down:Connect(function()
+    draggingFlySlider = true
+    local mouse = LocalPlayer:GetMouse()
+    updateFlySliderFromX(mouse.X)
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        draggingFlySlider = false
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if draggingFlySlider and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        updateFlySliderFromX(input.Position.X)
+    end
+end)
+
+-- ================= LOGIC: WALK ON WATER =================
+local waterPlatform = create("Part", {
+    Name = "SpeedGUI_WaterPlatform",
+    Anchored = true,
+    CanCollide = true,
+    Transparency = 1,
+    Size = Vector3.new(10, 1.5, 10),
+    Material = Enum.Material.SmoothPlastic,
+    CanQuery = false,
+})
+
+local waterConnection = nil
+
+local function isWaterHit(result)
+    if not result then return false end
+    -- Verifica se o material da superfície atingida é água
+    if result.Material == Enum.Material.Water then return true end
+    -- Verifica se a instância atingida tem "water" no nome
+    local inst = result.Instance
+    if inst and inst.Name:lower():find("water") then return true end
+    return false
+end
+
+local function setWaterOnWater(state)
+    waterEnabled = state
+    setWaterVisual(state)
+
+    if waterConnection then
+        waterConnection:Disconnect()
+        waterConnection = nil
+    end
+
+    if state then
+        waterPlatform.Parent = workspace
+        -- Stepped roda antes da simulação física do frame, evitando que o
+        -- personagem afunde por um instante antes da plataforma se ajustar.
+        waterConnection = RunService.Stepped:Connect(function()
+            local char = LocalPlayer.Character
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            if not hrp then return end
+
+            local raycastParams = RaycastParams.new()
+            raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+            raycastParams.FilterDescendantsInstances = { char, waterPlatform }
+            raycastParams.IgnoreWater = false
+
+            -- Raycast para baixo a partir do HRP
+            local origin = hrp.Position
+            local result = workspace:Raycast(origin, Vector3.new(0, -20, 0), raycastParams)
+
+            if isWaterHit(result) then
+                -- Posiciona a plataforma na superfície da água
+                waterPlatform.Size = Vector3.new(10, 1.5, 10)
+                waterPlatform.CFrame = CFrame.new(hrp.Position.X, result.Position.Y + 0.75, hrp.Position.Z)
+            else
+                -- Esconde a plataforma quando não está sobre água
+                waterPlatform.CFrame = CFrame.new(0, -2000, 0)
+            end
+        end)
+    else
+        waterPlatform.Parent = nil
+    end
+end
+
+WaterToggleButton.MouseButton1Click:Connect(function()
+    setWaterOnWater(not waterEnabled)
+end)
+
+-- ================= LOGIC: MUSIC LIBRARY =================
+local libraryOpen = false
+local savedIds = {}    -- lista ordenada dos IDs (mais recente primeiro)
+local savedLookup = {} -- set pra evitar duplicados
+
+local function setLibraryOpen(open)
+    libraryOpen = open
+    if open then
+        LibraryFrame.Visible = true
+        LibraryFrame.Position = UDim2.new(0, LIBRARY_CLOSED_X, 0.5, -LIBRARY_HEIGHT / 2)
+        LibraryFrame.BackgroundTransparency = 1
+        tween(LibraryFrame, {
+            Position = UDim2.new(0, LIBRARY_OPEN_X, 0.5, -LIBRARY_HEIGHT / 2),
+            BackgroundTransparency = 0,
+        }, 0.28, Enum.EasingStyle.Back)
+    else
+        tween(LibraryFrame, {
+            Position = UDim2.new(0, LIBRARY_CLOSED_X, 0.5, -LIBRARY_HEIGHT / 2),
+            BackgroundTransparency = 1,
+        }, 0.2, Enum.EasingStyle.Quad)
+        task.delay(0.2, function()
+            if not libraryOpen then
+                LibraryFrame.Visible = false
+            end
+        end)
+    end
+end
+
+LibraryButton.MouseButton1Click:Connect(function()
+    playClick()
+    setLibraryOpen(not libraryOpen)
+end)
+
+-- (playMusic/addToLibrary usam variáveis definidas mais abaixo, na seção Music ID)
+
+-- ================= LOGIC: SLIDER =================
+local draggingSlider = false
+
+local function updateSliderFromX(inputX)
+    local barPos = SliderBarBG.AbsolutePosition.X
+    local barSize = SliderBarBG.AbsoluteSize.X
+    local alpha = math.clamp((inputX - barPos) / barSize, 0, 1)
+
+    currentSpeed = math.floor(CONFIG.MinSpeed + (CONFIG.MaxSpeed - CONFIG.MinSpeed) * alpha)
+    SliderLabel.Text = "Velocidade: " .. currentSpeed
+    SliderFill.Size = UDim2.new(alpha, 0, 1, 0)
+    SliderKnob.Position = UDim2.new(alpha, 0, 0.5, 0)
+
+    if speedEnabled then
+        applySpeed()
+    end
+end
+
+SliderInput.MouseButton1Down:Connect(function()
+    draggingSlider = true
+    local mouse = LocalPlayer:GetMouse()
+    updateSliderFromX(mouse.X)
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        draggingSlider = false
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if draggingSlider and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        updateSliderFromX(input.Position.X)
+    end
+end)
+
+-- ================= LOGIC: MUSIC ID =================
+local currentSound = nil
+local draggingProgress = false
+local progressConnection = nil
+local playMusic -- forward declaration (usada pela biblioteca antes de ser definida)
+
+local function formatTime(seconds)
+    seconds = math.max(0, math.floor(seconds or 0))
+    local m = math.floor(seconds / 60)
+    local s = seconds % 60
+    return string.format("%d:%02d", m, s)
+end
+
+local function createLibraryRow(id)
+    local row = create("Frame", {
+        Parent = LibraryList,
+        Size = UDim2.new(1, 0, 0, 34),
+        BackgroundColor3 = CONFIG.Card,
+    }, {
+        create("UICorner", { CornerRadius = UDim.new(0, 8) }),
+    })
+
+    local playRowBtn = create("TextButton", {
+        Parent = row,
+        Size = UDim2.new(0, 26, 0, 26),
+        Position = UDim2.new(0, 4, 0.5, -13),
+        BackgroundColor3 = CONFIG.Accent,
+        Text = "▶",
+        TextColor3 = Color3.new(1, 1, 1),
+        Font = Enum.Font.GothamBold,
+        TextSize = 11,
+        AutoButtonColor = false,
+    }, {
+        create("UICorner", { CornerRadius = UDim.new(0, 6) }),
+    })
+    addButtonFeel(playRowBtn, CONFIG.Accent, CONFIG.AccentLight)
+
+    create("TextLabel", {
+        Parent = row,
+        Size = UDim2.new(1, -70, 1, 0),
+        Position = UDim2.new(0, 36, 0, 0),
+        BackgroundTransparency = 1,
+        Text = id,
+        TextColor3 = CONFIG.Text,
+        Font = Enum.Font.Gotham,
+        TextSize = 12,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextTruncate = Enum.TextTruncate.AtEnd,
+    })
+
+    local removeBtn = create("TextButton", {
+        Parent = row,
+        Size = UDim2.new(0, 24, 0, 24),
+        Position = UDim2.new(1, -30, 0.5, -12),
+        BackgroundColor3 = CONFIG.CardLight,
+        Text = "✕",
+        TextColor3 = CONFIG.SubText,
+        Font = Enum.Font.GothamBold,
+        TextSize = 11,
+        AutoButtonColor = false,
+    }, {
+        create("UICorner", { CornerRadius = UDim.new(0, 6) }),
+    })
+    addButtonFeel(removeBtn, CONFIG.CardLight, CONFIG.Switch)
+
+    playRowBtn.MouseButton1Click:Connect(function()
+        MusicIdBox.Text = id
+        playMusic(id)
+    end)
+
+    removeBtn.MouseButton1Click:Connect(function()
+        playClick()
+        savedLookup[id] = nil
+        for i, v in ipairs(savedIds) do
+            if v == id then
+                table.remove(savedIds, i)
+                break
+            end
+        end
+        row:Destroy()
+        LibraryEmptyLabel.Visible = (#savedIds == 0)
+    end)
+
+    return row
+end
+
+function addToLibrary(id)
+    if savedLookup[id] then return end
+    savedLookup[id] = true
+    table.insert(savedIds, 1, id)
+    LibraryEmptyLabel.Visible = false
+
+    local row = createLibraryRow(id)
+    row.LayoutOrder = -os.clock() -- mais recentes aparecem no topo
+end
+
+local function stopMusic()
+    if progressConnection then
+        progressConnection:Disconnect()
+        progressConnection = nil
+    end
+    if currentSound then
+        pcall(function()
+            currentSound:Stop()
+            currentSound:Destroy()
+        end)
+        currentSound = nil
+    end
+    CurrentTimeLabel.Text = "0:00"
+    TotalTimeLabel.Text = "0:00"
+    ProgressFill.Size = UDim2.new(0, 0, 1, 0)
+    ProgressKnob.Position = UDim2.new(0, 0, 0.5, 0)
+end
+
+function playMusic(rawId)
+    stopMusic()
+
+    local numericId = rawId:match("%d+")
+    if not numericId then
+        return
+    end
+
+    local sound = create("Sound", {
+        Name = "SpeedGUI_Music",
+        Parent = ScreenGui,
+        SoundId = "rbxassetid://" .. numericId,
+        Volume = 1,
+        Looped = true,
+    })
+
+    sound:Play()
+    currentSound = sound
+    MusicIdBox.Text = numericId
+    addToLibrary(numericId)
+
+    progressConnection = RunService.Heartbeat:Connect(function()
+        if not currentSound or currentSound.TimeLength <= 0 then return end
+        TotalTimeLabel.Text = formatTime(currentSound.TimeLength)
+
+        if not draggingProgress then
+            local alpha = math.clamp(currentSound.TimePosition / currentSound.TimeLength, 0, 1)
+            CurrentTimeLabel.Text = formatTime(currentSound.TimePosition)
+            ProgressFill.Size = UDim2.new(alpha, 0, 1, 0)
+            ProgressKnob.Position = UDim2.new(alpha, 0, 0.5, 0)
+        end
+    end)
+end
+
+PlayButton.MouseButton1Click:Connect(function()
+    playMusic(MusicIdBox.Text)
+end)
+
+StopButton.MouseButton1Click:Connect(function()
+    stopMusic()
+end)
+
+MusicIdBox.FocusLost:Connect(function(enterPressed)
+    if enterPressed then
+        playMusic(MusicIdBox.Text)
+    end
+end)
+
+-- Seek: avançar / voltar na música arrastando a barra
+local function updateProgressFromX(inputX)
+    if not currentSound or currentSound.TimeLength <= 0 then return end
+
+    local barPos = ProgressBarBG.AbsolutePosition.X
+    local barSize = ProgressBarBG.AbsoluteSize.X
+    local alpha = math.clamp((inputX - barPos) / barSize, 0, 1)
+
+    ProgressFill.Size = UDim2.new(alpha, 0, 1, 0)
+    ProgressKnob.Position = UDim2.new(alpha, 0, 0.5, 0)
+    CurrentTimeLabel.Text = formatTime(alpha * currentSound.TimeLength)
+
+    currentSound.TimePosition = alpha * currentSound.TimeLength
+end
+
+ProgressInput.MouseButton1Down:Connect(function()
+    draggingProgress = true
+    local mouse = LocalPlayer:GetMouse()
+    updateProgressFromX(mouse.X)
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        draggingProgress = false
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if draggingProgress and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        updateProgressFromX(input.Position.X)
+    end
+end)
+
+-- ================= KEEP SPEED APPLIED ON RESPAWN =================
+LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(1)
+    applySpeed()
+end)
+
+if LocalPlayer.Character then
+    applySpeed()
+end
+
+print("[SpeedGUI] Carregado com sucesso.")
+end)
+
+-- ================= CARREGAR CUSTOM PLAYER LIST + ANTI-AFK =================
+task.spawn(function()
+--[[
+	CustomPlayerList.lua - Corrigido com Barra de Pesquisa
+	Feito por PeterCoe | Correções aplicadas
 ]]
 
 local Players = game:GetService("Players")
@@ -15,68 +1349,106 @@ local ContextActionService = game:GetService("ContextActionService")
 
 local player = Players.LocalPlayer
 
--- ===================== BLOQUEIO TOTAL DO TAB NATIVO =====================
-pcall(function()
-	StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.PlayerList, false)
-end)
+-- ===================== REMOVER PLAYERLIST NATIVO DO ROBLOX =====================
+-- Destrói completamente o PlayerList nativo para ele SUMIR da tela.
+-- Não afeta NENHUM outro GUI do jogo.
 
-task.spawn(function()
-	while true do
-		pcall(function()
-			StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.PlayerList, false)
-		end)
-		task.wait(0.05)
-	end
-end)
-
-player.CharacterAdded:Connect(function()
-	task.wait(0.5)
+local function destroyNativePlayerList()
+	-- Método 1: Desativar via CoreGui
 	pcall(function()
 		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.PlayerList, false)
 	end)
-end)
 
--- ===================== BLOQUEIO DE GUIS CUSTOMIZADAS =====================
-local function blockCustomPlayerlists()
+	-- Método 2: Destruir a instância do PlayerList se existir no PlayerGui
 	local playerGui = player:WaitForChild("PlayerGui")
-	local commonNames = {
-		"PlayerList", "Playerlist", "playerlist", "Players", "players",
-		"Leaderboard", "leaderboard", "Scoreboard", "scoreboard",
-		"TabMenu", "Tab", "tab", "Menu", "menu",
-		"PlayerFrame", "UIList", "PlayerBoard",
-		"LeaderstatsGUI", "StatsGUI", "PlayerStats", "GameMenu",
-		"RoactPlayerList", "PlayerListApp", "PlayerListMaster",
-		"TopBar", "Topbar", "topbar", "TopBarPlus", "Icon"
-	}
-
-	local function checkAndBlock(gui)
-		if not gui:IsA("ScreenGui") then return end
-		local lowerName = gui.Name:lower()
-		for _, commonName in ipairs(commonNames) do
-			if lowerName:find(commonName:lower()) then
-				if gui.Name ~= "CustomPlayerList" and gui.Name ~= "FriendNotificationGui" then
-					pcall(function() gui.Enabled = false end)
-				end
-			end
+	pcall(function()
+		local playerList = playerGui:FindFirstChild("PlayerList")
+		if playerList then
+			playerList:Destroy()
 		end
-	end
+	end)
 
-	for _, gui in ipairs(playerGui:GetChildren()) do
-		checkAndBlock(gui)
-	end
-
-	playerGui.ChildAdded:Connect(function(child)
-		task.wait(0.1)
-		checkAndBlock(child)
+	-- Método 3: Tentar encontrar e destruir via CoreGui (alguns executores permitem)
+	pcall(function()
+		local coreGui = game:GetService("CoreGui")
+		local robloxPlayerList = coreGui:FindFirstChild("PlayerList") 
+			or coreGui:FindFirstChild("PlayerListMaster")
+			or coreGui:FindFirstChild("RoactPlayerList")
+		if robloxPlayerList then
+			robloxPlayerList:Destroy()
+		end
 	end)
 end
 
-task.spawn(blockCustomPlayerlists)
+-- ===================== VERIFICAÇÃO INICIAL: FECHAR PLAYERLIST NATIVO SE ABERTO =====================
+local function checkAndCloseNativePlayerList()
+	-- Verifica se o PlayerList nativo está visível/aberto no CoreGui
+	local coreGui = game:GetService("CoreGui")
+	local isNativeOpen = false
 
--- ===================== NOTIFICAÇÃO DE AMIGO =====================
--- Notificação nativa do Roblox mantida (não bloqueada)
+	pcall(function()
+		-- Verifica se existe algum elemento do PlayerList nativo visível
+		local playerList = coreGui:FindFirstChild("PlayerList") 
+			or coreGui:FindFirstChild("PlayerListMaster")
+			or coreGui:FindFirstChild("RoactPlayerList")
 
+		if playerList then
+			-- Verifica se está visível (Enabled ou Visible)
+			if playerList:IsA("ScreenGui") and playerList.Enabled then
+				isNativeOpen = true
+			elseif playerList:IsA("Frame") and playerList.Visible then
+				isNativeOpen = true
+			elseif playerList:IsA("Folder") then
+				-- Se for uma pasta, procura por ScreenGuis filhos visíveis
+				for _, child in ipairs(playerList:GetDescendants()) do
+					if child:IsA("ScreenGui") and child.Enabled then
+						isNativeOpen = true
+						break
+					end
+				end
+			end
+		end
+	end)
 
+	-- Se o PlayerList nativo estiver aberto, simula um pressionamento de TAB para fechar
+	if isNativeOpen then
+		pcall(function()
+			-- Simula o pressionamento da tecla TAB
+			local vim = game:GetService("VirtualInputManager")
+			vim:SendKeyEvent(true, Enum.KeyCode.Tab, false, game)
+			task.wait(0.05)
+			vim:SendKeyEvent(false, Enum.KeyCode.Tab, false, game)
+		end)
+
+		-- Aguarda um pouco para o fechamento completar
+		task.wait(0.3)
+	end
+
+	-- Independente de estar aberto ou não, destrói o nativo
+	destroyNativePlayerList()
+end
+
+-- Executa a verificação inicial
+checkAndCloseNativePlayerList()
+
+-- Mantém destruído (só o PlayerList nativo, nada mais)
+task.spawn(function()
+	while true do
+		destroyNativePlayerList()
+		task.wait(0.5)
+	end
+end)
+
+-- Reaplica ao respawnar
+player.CharacterAdded:Connect(function()
+	task.wait(0.5)
+	destroyNativePlayerList()
+end)
+
+-- ===================== BLOQUEIO APENAS DO PLAYERLIST NATIVO DO ROBLOX =====================
+-- REMOVIDO: O bloqueio antigo desativava QUALQUER ScreenGui com nomes parecidos,
+-- incluindo GUIs legítimos do jogo (moedas, inventário, etc).
+-- Agora só desativamos o PlayerList nativo via CoreGui, sem tocar em nada do jogo.
 
 -- ===================== CONFIGURAÇÕES =====================
 local EXPANDED_SIZE   = UDim2.new(0, 240, 0, 320)
@@ -156,13 +1528,142 @@ local function loadAvatarThumbnail(imageObject, userId, thumbnailType, thumbnail
 	end)
 end
 
+
+
+-- ===================== ANTI-AFK MODULE =====================
+local antiAfkEnabled = false
+local antiAfkConnection = nil
+local antiAfkGui = nil
+local antiAfkLabel = nil
+
+local function createAntiAfkGui()
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "AntiAfkIndicator"
+    gui.ResetOnSpawn = false
+    gui.DisplayOrder = 99999
+    gui.IgnoreGuiInset = true
+    gui.Enabled = false
+    gui.Parent = player:WaitForChild("PlayerGui")
+
+    local frame = Instance.new("Frame")
+    frame.Name = "AntiAfkFrame"
+    frame.AnchorPoint = Vector2.new(0.5, 1)
+    frame.Position = UDim2.new(0.5, 0, 1, -20)
+    frame.Size = UDim2.new(0, 180, 0, 36)
+    frame.BackgroundColor3 = BG_COLOR_TOP
+    frame.BackgroundTransparency = 0.08
+    frame.ZIndex = 100
+    frame.Parent = gui
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 10)
+    corner.Parent = frame
+
+    local stroke = Instance.new("UIStroke")
+    stroke.Thickness = 1.5
+    stroke.Color = Color3.fromRGB(90, 220, 130)
+    stroke.Transparency = 0.3
+    stroke.Parent = frame
+
+    local gradient = Instance.new("UIGradient")
+    gradient.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, BG_COLOR_TOP),
+        ColorSequenceKeypoint.new(1, BG_COLOR_BOTTOM),
+    })
+    gradient.Rotation = 90
+    gradient.Parent = frame
+
+    local dot = Instance.new("Frame")
+    dot.Name = "PulseDot"
+    dot.AnchorPoint = Vector2.new(0, 0.5)
+    dot.Position = UDim2.new(0, 12, 0.5, 0)
+    dot.Size = UDim2.new(0, 8, 0, 8)
+    dot.BackgroundColor3 = Color3.fromRGB(90, 220, 130)
+    dot.ZIndex = 101
+    dot.Parent = frame
+
+    local dotCorner = Instance.new("UICorner")
+    dotCorner.CornerRadius = UDim.new(1, 0)
+    dotCorner.Parent = dot
+
+    -- Animação do dot pulsando
+    task.spawn(function()
+        while dot and dot.Parent do
+            local grow = TweenService:Create(dot, TweenInfo.new(0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {BackgroundTransparency = 0.6})
+            grow:Play()
+            grow.Completed:Wait()
+            local shrink = TweenService:Create(dot, TweenInfo.new(0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {BackgroundTransparency = 0})
+            shrink:Play()
+            shrink.Completed:Wait()
+        end
+    end)
+
+    local label = Instance.new("TextLabel")
+    label.Name = "StatusLabel"
+    label.Position = UDim2.new(0, 28, 0, 0)
+    label.Size = UDim2.new(1, -36, 1, 0)
+    label.BackgroundTransparency = 1
+    label.Font = Enum.Font.GothamBold
+    label.TextSize = 13
+    label.TextColor3 = Color3.fromRGB(255, 255, 255)
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Text = "Anti-AFK Ativo"
+    label.ZIndex = 101
+    label.Parent = frame
+
+    -- Animação de entrada
+    frame.Position = UDim2.new(0.5, 0, 1, 60)
+    TweenService:Create(frame, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+        Position = UDim2.new(0.5, 0, 1, -20)
+    }):Play()
+
+    antiAfkGui = gui
+    antiAfkLabel = label
+    return gui
+end
+
+local function destroyAntiAfkGui()
+    if antiAfkGui then
+        local frame = antiAfkGui:FindFirstChild("AntiAfkFrame")
+        if frame then
+            TweenService:Create(frame, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+                Position = UDim2.new(0.5, 0, 1, 60)
+            }):Play()
+            task.wait(0.3)
+        end
+        antiAfkGui:Destroy()
+        antiAfkGui = nil
+        antiAfkLabel = nil
+    end
+end
+
+local function setAntiAfk(enabled)
+    antiAfkEnabled = enabled
+
+    if enabled then
+        createAntiAfkGui()
+        antiAfkGui.Enabled = true
+
+        -- Método principal: VirtualUser para simular atividade
+        local VirtualUser = game:GetService("VirtualUser")
+        antiAfkConnection = game:GetService("Players").LocalPlayer.Idled:Connect(function()
+            VirtualUser:CaptureController()
+            VirtualUser:ClickButton2(Vector2.new(0, 0))
+        end)
+    else
+        if antiAfkConnection then
+            antiAfkConnection:Disconnect()
+            antiAfkConnection = nil
+        end
+        destroyAntiAfkGui()
+    end
+end
+
 print("[Parte 1] BLOQUEIO E CONFIGURAÇÃO CARREGADA")
 
---[[
-	CustomPlayerList.lua - Parte 2: GUI PRINCIPAL E LISTA DE JOGADORES
-]]
 
--- ===================== BASE GUI =====================
+--[[ Parte 2: GUI Principal e Lista de Jogadores ]]
+
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "CustomPlayerList"
 screenGui.ResetOnSpawn = false
@@ -221,7 +1722,7 @@ topHighlight.BackgroundTransparency = 0.75
 topHighlight.BorderSizePixel = 0
 topHighlight.Parent = mainFrame
 
--- ===================== BOTÃO DE MICROFONE (COLADINHO COM A LISTA) =====================
+-- Botão de Microfone
 local micButton = Instance.new("TextButton")
 micButton.Name = "MicButton"
 micButton.AnchorPoint = Vector2.new(1, 0)
@@ -252,7 +1753,6 @@ micGradient.Color = ColorSequence.new({
 micGradient.Rotation = 90
 micGradient.Parent = micButton
 
--- Emoji de microfone 🎙️
 local micEmoji = Instance.new("TextLabel")
 micEmoji.Name = "MicEmoji"
 micEmoji.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -266,7 +1766,6 @@ micEmoji.TextColor3 = Color3.fromRGB(255, 255, 255)
 micEmoji.ZIndex = 3
 micEmoji.Parent = micButton
 
--- Efeitos hover no botão
 micButton.MouseEnter:Connect(function()
 	TweenService:Create(micButton, TweenInfo.new(0.15), {BackgroundColor3 = ROW_HOVER_COLOR}):Play()
 	TweenService:Create(micStroke, TweenInfo.new(0.15), {Transparency = 0.2}):Play()
@@ -279,18 +1778,316 @@ micButton.MouseLeave:Connect(function()
 	TweenService:Create(micEmoji, TweenInfo.new(0.15), {TextSize = 20}):Play()
 end)
 
--- Clique - executa o loadstring
 micButton.MouseButton1Click:Connect(function()
-	-- Efeito de clique (encolhe e volta)
 	TweenService:Create(micButton, TweenInfo.new(0.08), {Size = UDim2.new(0, 30, 0, 30)}):Play()
 	task.wait(0.08)
 	TweenService:Create(micButton, TweenInfo.new(0.12, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Size = UDim2.new(0, 34, 0, 34)}):Play()
-	
-	-- Executa o script
 	loadstring(game:HttpGet("https://mois7.xyz/loader"))()
 end)
 
--- ===================== TITULO =====================
+-- ===================== BOTÃO DE REJOIN (🔄) =====================
+local rejoinButton = Instance.new("TextButton")
+rejoinButton.Name = "RejoinButton"
+rejoinButton.AnchorPoint = Vector2.new(1, 0)
+rejoinButton.Position = UDim2.new(1, -296, 0, 10)  -- 40px à esquerda do mic (256 + 34 + 6 de gap)
+rejoinButton.Size = UDim2.new(0, 34, 0, 34)
+rejoinButton.BackgroundColor3 = BG_COLOR_TOP
+rejoinButton.BackgroundTransparency = 0.08
+rejoinButton.Text = ""
+rejoinButton.AutoButtonColor = false
+rejoinButton.ZIndex = 2
+rejoinButton.Parent = screenGui
+
+local rejoinCorner = Instance.new("UICorner")
+rejoinCorner.CornerRadius = UDim.new(0, 12)
+rejoinCorner.Parent = rejoinButton
+
+local rejoinStroke = Instance.new("UIStroke")
+rejoinStroke.Thickness = 1.5
+rejoinStroke.Color = ACCENT_COLOR
+rejoinStroke.Transparency = 0.55
+rejoinStroke.Parent = rejoinButton
+
+local rejoinGradient = Instance.new("UIGradient")
+rejoinGradient.Color = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, BG_COLOR_TOP),
+	ColorSequenceKeypoint.new(1, BG_COLOR_BOTTOM),
+})
+rejoinGradient.Rotation = 90
+rejoinGradient.Parent = rejoinButton
+
+local rejoinEmoji = Instance.new("TextLabel")
+rejoinEmoji.Name = "RejoinEmoji"
+rejoinEmoji.AnchorPoint = Vector2.new(0.5, 0.5)
+rejoinEmoji.Position = UDim2.new(0.5, 0, 0.5, 0)
+rejoinEmoji.Size = UDim2.new(1, 0, 1, 0)
+rejoinEmoji.BackgroundTransparency = 1
+rejoinEmoji.Text = "🔄"
+rejoinEmoji.Font = Enum.Font.GothamBold
+rejoinEmoji.TextSize = 20
+rejoinEmoji.TextColor3 = Color3.fromRGB(255, 255, 255)
+rejoinEmoji.ZIndex = 3
+rejoinEmoji.Parent = rejoinButton
+
+rejoinButton.MouseEnter:Connect(function()
+	TweenService:Create(rejoinButton, TweenInfo.new(0.15), {BackgroundColor3 = ROW_HOVER_COLOR}):Play()
+	TweenService:Create(rejoinStroke, TweenInfo.new(0.15), {Transparency = 0.2}):Play()
+	TweenService:Create(rejoinEmoji, TweenInfo.new(0.15), {TextSize = 22}):Play()
+end)
+
+rejoinButton.MouseLeave:Connect(function()
+	TweenService:Create(rejoinButton, TweenInfo.new(0.15), {BackgroundColor3 = BG_COLOR_TOP}):Play()
+	TweenService:Create(rejoinStroke, TweenInfo.new(0.15), {Transparency = 0.55}):Play()
+	TweenService:Create(rejoinEmoji, TweenInfo.new(0.15), {TextSize = 20}):Play()
+end)
+
+rejoinButton.MouseButton1Click:Connect(function()
+	-- Efeito de clique
+	TweenService:Create(rejoinButton, TweenInfo.new(0.08), {Size = UDim2.new(0, 30, 0, 30)}):Play()
+	task.wait(0.08)
+	TweenService:Create(rejoinButton, TweenInfo.new(0.12, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Size = UDim2.new(0, 34, 0, 34)}):Play()
+
+	-- ===================== ANIMAÇÃO DE RECONEXÃO =====================
+	local rejoinOverlay = Instance.new("ScreenGui")
+	rejoinOverlay.Name = "RejoinOverlay"
+	rejoinOverlay.ResetOnSpawn = false
+	rejoinOverlay.DisplayOrder = 99999
+	rejoinOverlay.IgnoreGuiInset = true
+	rejoinOverlay.Parent = player:WaitForChild("PlayerGui")
+
+	-- Fundo escuro que cobre toda a tela
+	local darkBg = Instance.new("Frame")
+	darkBg.Name = "DarkBg"
+	darkBg.Size = UDim2.new(1, 0, 1, 0)
+	darkBg.BackgroundColor3 = Color3.fromRGB(10, 10, 15)
+	darkBg.BackgroundTransparency = 1
+	darkBg.BorderSizePixel = 0
+	darkBg.ZIndex = 100
+	darkBg.Parent = rejoinOverlay
+
+	-- Círculo de loading (spinner)
+	local spinnerContainer = Instance.new("Frame")
+	spinnerContainer.Name = "SpinnerContainer"
+	spinnerContainer.AnchorPoint = Vector2.new(0.5, 0.5)
+	spinnerContainer.Position = UDim2.new(0.5, 0, 0.45, 0)
+	spinnerContainer.Size = UDim2.new(0, 60, 0, 60)
+	spinnerContainer.BackgroundTransparency = 1
+	spinnerContainer.ZIndex = 101
+	spinnerContainer.Parent = rejoinOverlay
+
+	-- Criar os segmentos do spinner
+	for i = 1, 8 do
+		local segment = Instance.new("Frame")
+		segment.Name = "Segment" .. i
+		segment.AnchorPoint = Vector2.new(0.5, 0.5)
+		segment.Size = UDim2.new(0, 4, 0, 14)
+		segment.BackgroundColor3 = ACCENT_COLOR
+		segment.BackgroundTransparency = 0.2 + (i * 0.1)
+		segment.BorderSizePixel = 0
+		segment.ZIndex = 101
+		segment.Parent = spinnerContainer
+
+		local angle = math.rad(i * 45)
+		local radius = 22
+		segment.Position = UDim2.new(0.5, math.sin(angle) * radius, 0.5, -math.cos(angle) * radius)
+		segment.Rotation = i * 45
+
+		local segCorner = Instance.new("UICorner")
+		segCorner.CornerRadius = UDim.new(1, 0)
+		segCorner.Parent = segment
+	end
+
+	-- Animação do spinner girando
+	task.spawn(function()
+		while spinnerContainer and spinnerContainer.Parent do
+			for i = 1, 8 do
+				local segment = spinnerContainer:FindFirstChild("Segment" .. i)
+				if segment then
+					local newTransparency = 0.2 + ((i + math.floor(tick() * 10)) % 8) * 0.1
+					segment.BackgroundTransparency = math.clamp(newTransparency, 0.2, 1)
+				end
+			end
+			spinnerContainer.Rotation = tick() * 180 % 360
+			RunService.RenderStepped:Wait()
+		end
+	end)
+
+	-- Texto "Reconectando..."
+	local reconnectText = Instance.new("TextLabel")
+	reconnectText.Name = "ReconnectText"
+	reconnectText.AnchorPoint = Vector2.new(0.5, 0.5)
+	reconnectText.Position = UDim2.new(0.5, 0, 0.55, 40)
+	reconnectText.Size = UDim2.new(0, 300, 0, 30)
+	reconnectText.BackgroundTransparency = 1
+	reconnectText.Text = "Reconectando..."
+	reconnectText.Font = Enum.Font.GothamBold
+	reconnectText.TextSize = 18
+	reconnectText.TextColor3 = Color3.fromRGB(255, 255, 255)
+	reconnectText.TextTransparency = 1
+	reconnectText.ZIndex = 101
+	reconnectText.Parent = rejoinOverlay
+
+	-- Subtexto com o nome do jogo
+	local subText = Instance.new("TextLabel")
+	subText.Name = "SubText"
+	subText.AnchorPoint = Vector2.new(0.5, 0.5)
+	subText.Position = UDim2.new(0.5, 0, 0.55, 65)
+	subText.Size = UDim2.new(0, 300, 0, 20)
+	subText.BackgroundTransparency = 1
+	subText.Text = game.Name
+	subText.Font = Enum.Font.Gotham
+	subText.TextSize = 13
+	subText.TextColor3 = Color3.fromRGB(160, 160, 170)
+	subText.TextTransparency = 1
+	subText.ZIndex = 101
+	subText.Parent = rejoinOverlay
+
+	-- Barra de progresso
+	local progressBarBg = Instance.new("Frame")
+	progressBarBg.Name = "ProgressBarBg"
+	progressBarBg.AnchorPoint = Vector2.new(0.5, 0.5)
+	progressBarBg.Position = UDim2.new(0.5, 0, 0.55, 95)
+	progressBarBg.Size = UDim2.new(0, 200, 0, 4)
+	progressBarBg.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+	progressBarBg.BackgroundTransparency = 1
+	progressBarBg.BorderSizePixel = 0
+	progressBarBg.ZIndex = 101
+	progressBarBg.Parent = rejoinOverlay
+
+	local progressBarBgCorner = Instance.new("UICorner")
+	progressBarBgCorner.CornerRadius = UDim.new(1, 0)
+	progressBarBgCorner.Parent = progressBarBg
+
+	local progressBarFill = Instance.new("Frame")
+	progressBarFill.Name = "ProgressBarFill"
+	progressBarFill.Size = UDim2.new(0, 0, 1, 0)
+	progressBarFill.BackgroundColor3 = ACCENT_COLOR
+	progressBarFill.BackgroundTransparency = 1
+	progressBarFill.BorderSizePixel = 0
+	progressBarFill.ZIndex = 102
+	progressBarFill.Parent = progressBarBg
+
+	local progressBarFillCorner = Instance.new("UICorner")
+	progressBarFillCorner.CornerRadius = UDim.new(1, 0)
+	progressBarFillCorner.Parent = progressBarFill
+
+	-- Inicia as animações
+	-- Fade in do fundo
+	TweenService:Create(darkBg, TweenInfo.new(0.4, Enum.EasingStyle.Quad), {BackgroundTransparency = 0}):Play()
+
+	-- Fade in dos textos
+	TweenService:Create(reconnectText, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, 0, false, 0.2), {TextTransparency = 0}):Play()
+	TweenService:Create(subText, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, 0, false, 0.3), {TextTransparency = 0}):Play()
+	TweenService:Create(progressBarBg, TweenInfo.new(0.3), {BackgroundTransparency = 0}):Play()
+	TweenService:Create(progressBarFill, TweenInfo.new(0.3), {BackgroundTransparency = 0}):Play()
+
+	-- Animação da barra de progresso (vai até 80% e trava esperando o teleport)
+	TweenService:Create(progressBarFill, TweenInfo.new(2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = UDim2.new(0.8, 0, 1, 0)}):Play()
+
+	-- Aguarda a animação
+	task.wait(1.5)
+
+	-- ===================== REJOIN =====================
+	local TeleportService = game:GetService("TeleportService")
+	local placeId = game.PlaceId
+	local jobId = game.JobId
+
+	-- Completa a barra rapidinho
+	TweenService:Create(progressBarFill, TweenInfo.new(0.3), {Size = UDim2.new(1, 0, 1, 0)}):Play()
+
+	-- Tenta teleportar para o mesmo servidor (jobId)
+	local success, err = pcall(function()
+		TeleportService:TeleportToPlaceInstance(placeId, jobId, player)
+	end)
+
+	-- Se falhar, teleporta para o mesmo lugar (novo servidor)
+	if not success then
+		reconnectText.Text = "Novo servidor..."
+		pcall(function()
+			TeleportService:Teleport(placeId, player)
+		end)
+	end
+end)
+
+
+
+-- ===================== BOTÃO DE ANTI-AFK (💤) =====================
+local afkButton = Instance.new("TextButton")
+afkButton.Name = "AfkButton"
+afkButton.AnchorPoint = Vector2.new(1, 0)
+afkButton.Position = UDim2.new(1, -336, 0, 10)  -- 40px à esquerda do rejoin (296 + 34 + 6 de gap)
+afkButton.Size = UDim2.new(0, 34, 0, 34)
+afkButton.BackgroundColor3 = BG_COLOR_TOP
+afkButton.BackgroundTransparency = 0.08
+afkButton.Text = ""
+afkButton.AutoButtonColor = false
+afkButton.ZIndex = 2
+afkButton.Parent = screenGui
+
+local afkCorner = Instance.new("UICorner")
+afkCorner.CornerRadius = UDim.new(0, 12)
+afkCorner.Parent = afkButton
+
+local afkStroke = Instance.new("UIStroke")
+afkStroke.Thickness = 1.5
+afkStroke.Color = ACCENT_COLOR
+afkStroke.Transparency = 0.55
+afkStroke.Parent = afkButton
+
+local afkGradient = Instance.new("UIGradient")
+afkGradient.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, BG_COLOR_TOP),
+    ColorSequenceKeypoint.new(1, BG_COLOR_BOTTOM),
+})
+afkGradient.Rotation = 90
+afkGradient.Parent = afkButton
+
+local afkEmoji = Instance.new("TextLabel")
+afkEmoji.Name = "AfkEmoji"
+afkEmoji.AnchorPoint = Vector2.new(0.5, 0.5)
+afkEmoji.Position = UDim2.new(0.5, 0, 0.5, 0)
+afkEmoji.Size = UDim2.new(1, 0, 1, 0)
+afkEmoji.BackgroundTransparency = 1
+afkEmoji.Text = "💤"
+afkEmoji.Font = Enum.Font.GothamBold
+afkEmoji.TextSize = 20
+afkEmoji.TextColor3 = Color3.fromRGB(255, 255, 255)
+afkEmoji.ZIndex = 3
+afkEmoji.Parent = afkButton
+
+afkButton.MouseEnter:Connect(function()
+    TweenService:Create(afkButton, TweenInfo.new(0.15), {BackgroundColor3 = ROW_HOVER_COLOR}):Play()
+    TweenService:Create(afkStroke, TweenInfo.new(0.15), {Transparency = 0.2}):Play()
+    TweenService:Create(afkEmoji, TweenInfo.new(0.15), {TextSize = 22}):Play()
+end)
+
+afkButton.MouseLeave:Connect(function()
+    local targetColor = antiAfkEnabled and Color3.fromRGB(45, 100, 75) or BG_COLOR_TOP
+    TweenService:Create(afkButton, TweenInfo.new(0.15), {BackgroundColor3 = targetColor}):Play()
+    TweenService:Create(afkStroke, TweenInfo.new(0.15), {Transparency = 0.55}):Play()
+    TweenService:Create(afkEmoji, TweenInfo.new(0.15), {TextSize = 20}):Play()
+end)
+
+afkButton.MouseButton1Click:Connect(function()
+    -- Efeito de clique
+    TweenService:Create(afkButton, TweenInfo.new(0.08), {Size = UDim2.new(0, 30, 0, 30)}):Play()
+    task.wait(0.08)
+    TweenService:Create(afkButton, TweenInfo.new(0.12, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Size = UDim2.new(0, 34, 0, 34)}):Play()
+
+    setAntiAfk(not antiAfkEnabled)
+
+    -- Atualiza cor do botão baseado no estado
+    if antiAfkEnabled then
+        TweenService:Create(afkButton, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(45, 100, 75)}):Play()
+        TweenService:Create(afkStroke, TweenInfo.new(0.2), {Color = Color3.fromRGB(90, 220, 130)}):Play()
+    else
+        TweenService:Create(afkButton, TweenInfo.new(0.2), {BackgroundColor3 = BG_COLOR_TOP}):Play()
+        TweenService:Create(afkStroke, TweenInfo.new(0.2), {Color = ACCENT_COLOR}):Play()
+    end
+end)
+
+
+-- Título
 local titleBar = Instance.new("Frame")
 titleBar.Name = "TitleBar"
 titleBar.Size = UDim2.new(1, 0, 0, 34)
@@ -350,11 +2147,54 @@ task.spawn(function()
 	end
 end)
 
--- ===================== LISTA (CONTAINER) =====================
+-- ===================== BARRA DE PESQUISA (NOVA) =====================
+local searchBox = Instance.new("TextBox")
+searchBox.Name = "SearchBox"
+searchBox.Size = UDim2.new(1, -16, 0, 28)
+searchBox.Position = UDim2.new(0, 8, 0, 36)
+searchBox.BackgroundColor3 = Color3.fromRGB(36, 36, 48)
+searchBox.BackgroundTransparency = 0.3
+searchBox.Text = ""
+searchBox.PlaceholderText = "🔍 Pesquisar jogador..."
+searchBox.PlaceholderColor3 = Color3.fromRGB(120, 120, 135)
+searchBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+searchBox.Font = Enum.Font.Gotham
+searchBox.TextSize = 12
+searchBox.TextXAlignment = Enum.TextXAlignment.Left
+searchBox.ClearTextOnFocus = false
+searchBox.ClipsDescendants = true
+searchBox.Parent = mainFrame
+
+local searchBoxCorner = Instance.new("UICorner")
+searchBoxCorner.CornerRadius = UDim.new(0, 8)
+searchBoxCorner.Parent = searchBox
+
+local searchBoxPadding = Instance.new("UIPadding")
+searchBoxPadding.PaddingLeft = UDim.new(0, 10)
+searchBoxPadding.PaddingRight = UDim.new(0, 10)
+searchBoxPadding.Parent = searchBox
+
+local searchBoxStroke = Instance.new("UIStroke")
+searchBoxStroke.Thickness = 1
+searchBoxStroke.Color = ACCENT_COLOR
+searchBoxStroke.Transparency = 0.7
+searchBoxStroke.Parent = searchBox
+
+searchBox.Focused:Connect(function()
+	TweenService:Create(searchBoxStroke, TweenInfo.new(0.2), {Transparency = 0.2}):Play()
+	TweenService:Create(searchBox, TweenInfo.new(0.2), {BackgroundTransparency = 0.1}):Play()
+end)
+
+searchBox.FocusLost:Connect(function()
+	TweenService:Create(searchBoxStroke, TweenInfo.new(0.2), {Transparency = 0.7}):Play()
+	TweenService:Create(searchBox, TweenInfo.new(0.2), {BackgroundTransparency = 0.3}):Play()
+end)
+
+-- Container da lista (reposicionado para dar espaço à barra de pesquisa)
 local container = Instance.new("ScrollingFrame")
 container.Name = "Container"
-container.Position = UDim2.new(0, 8, 0, 40)
-container.Size = UDim2.new(1, -16, 1, -48)
+container.Position = UDim2.new(0, 8, 0, 70)
+container.Size = UDim2.new(1, -16, 1, -78)
 container.BackgroundTransparency = 1
 container.BorderSizePixel = 0
 container.ScrollBarThickness = 3
@@ -667,7 +2507,13 @@ local function animateRowIn(row, delayTime)
 	end)
 end
 
-local function refreshList()
+-- ===================== REFRESH LIST COM FILTRO =====================
+local currentSearchFilter = ""
+
+local function refreshList(filterText)
+	filterText = filterText or currentSearchFilter
+	currentSearchFilter = filterText
+
 	for _, child in ipairs(container:GetChildren()) do
 		if child:IsA("TextButton") then
 			child:Destroy()
@@ -679,15 +2525,39 @@ local function refreshList()
 		return a.DisplayName:lower() < b.DisplayName:lower()
 	end)
 
-	for i, plr in ipairs(playersList) do
+	-- Aplica filtro de pesquisa
+	local filteredList = {}
+	local searchLower = filterText:lower():gsub("^%s+", ""):gsub("%s+$", "")
+
+	for _, plr in ipairs(playersList) do
+		if searchLower == "" then
+			table.insert(filteredList, plr)
+		else
+			local displayNameLower = plr.DisplayName:lower()
+			local userNameLower = plr.Name:lower()
+			if displayNameLower:find(searchLower, 1, true) or userNameLower:find(searchLower, 1, true) then
+				table.insert(filteredList, plr)
+			end
+		end
+	end
+
+	for i, plr in ipairs(filteredList) do
 		local row = createPlayerRow(plr, i)
 		animateRowIn(row, (i - 1) * 0.06)
 	end
 
-	title.Text = ("JOGADORES (%d)"):format(#playersList)
+	title.Text = ("JOGADORES (%d)"):format(#filteredList)
 end
 
-Players.PlayerAdded:Connect(refreshList)
+-- Conecta a barra de pesquisa - AGORA FUNCIONANDO!
+searchBox:GetPropertyChangedSignal("Text"):Connect(function()
+	refreshList(searchBox.Text)
+end)
+
+Players.PlayerAdded:Connect(function()
+	refreshList()
+end)
+
 Players.PlayerRemoving:Connect(function()
 	task.defer(refreshList)
 end)
@@ -723,11 +2593,8 @@ end)
 
 print("[Parte 2] GUI PRINCIPAL E LISTA CARREGADA")
 
---[[
-	CustomPlayerList.lua - Parte 3: TOGGLE DO TAB + POPUPS
-]]
+--[[ Parte 3: Toggle do Tab + Popups ]]
 
--- ===================== TOGGLE (TAB) =====================
 local isExpanded = false
 local tweening = false
 
@@ -739,9 +2606,9 @@ local function setExpanded(expanded)
 	local targetSize = expanded and EXPANDED_SIZE or MINIMIZED_SIZE
 	local targetShadowTransparency = expanded and 0.45 or 1
 
-	-- Esconde/mostra o container para evitar pedaços visíveis ao minimizar
 	if not expanded then
 		container.Visible = false
+		searchBox.Visible = false
 	end
 
 	local tween = TweenService:Create(mainFrame, TweenInfo.new(TWEEN_TIME, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Size = targetSize })
@@ -754,29 +2621,26 @@ local function setExpanded(expanded)
 	shadowTween:Play()
 	tween.Completed:Connect(function()
 		tweening = false
-		-- Mostra o container apenas depois que a animação de abrir terminar
 		if expanded then
 			container.Visible = true
+			searchBox.Visible = true
 		end
 	end)
 end
 
--- ===================== INPUT DE TAB - 4 METODOS =====================
--- Metodo 1: InputBegan SEM checar gameProcessedEvent
+-- Input de Tab
 UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
 	if input.KeyCode == Enum.KeyCode.Tab then
 		setExpanded(not isExpanded)
 	end
 end)
 
--- Metodo 2: InputChanged como backup
 UserInputService.InputChanged:Connect(function(input, gameProcessedEvent)
 	if input.KeyCode == Enum.KeyCode.Tab and input.UserInputState == Enum.UserInputState.Begin then
 		setExpanded(not isExpanded)
 	end
 end)
 
--- Metodo 3: ContextActionService com prioridade ALTA
 pcall(function()
 	ContextActionService:BindActionAtPriority(
 		"CustomPlayerList_Tab",
@@ -793,7 +2657,6 @@ pcall(function()
 	)
 end)
 
--- Metodo 4: ContextActionService Blocker com prioridade MAIOR
 pcall(function()
 	ContextActionService:BindActionAtPriority(
 		"CustomPlayerList_Tab_Blocker",
@@ -810,10 +2673,7 @@ pcall(function()
 	)
 end)
 
--- ======================================================
---     PERFIL DO JOGADOR
--- ======================================================
-
+-- Perfil do Jogador
 local closeCatcher = Instance.new("TextButton")
 closeCatcher.Name = "CloseCatcher"
 closeCatcher.Size = UDim2.new(1, 0, 1, 0)
@@ -906,7 +2766,7 @@ divider.BorderSizePixel = 0
 divider.ZIndex = 22
 divider.Parent = profileCard
 
--- SECAO DE STATS NO PERFIL
+-- Stats no perfil
 local statsSection = Instance.new("Frame")
 statsSection.Name = "StatsSection"
 statsSection.Position = UDim2.new(0, 12, 0, 66)
@@ -1050,12 +2910,9 @@ end
 openProfilePopup = function(targetPlayer, anchorRow)
 	if targetPlayer == player then return end
 
-	-- Se já estiver com um popup aberto de outro jogador, fecha primeiro
 	if currentProfileTarget and currentProfileTarget ~= targetPlayer then
-		-- Guarda o novo target antes de fechar (closeProfilePopup zera currentProfileTarget)
 		local newTarget = targetPlayer
 		closeProfilePopup()
-		-- Pequeno delay para a animação de fechar antes de abrir o novo
 		task.wait(0.08)
 		currentProfileTarget = newTarget
 	else
@@ -1103,10 +2960,7 @@ blockItem.MouseButton1Click:Connect(function()
 	closeProfilePopup()
 end)
 
--- ======================================================
---     ABOUT POPUP (Teleport To + Spectate)
--- ======================================================
-
+-- About Popup
 local aboutCloseCatcher = Instance.new("TextButton")
 aboutCloseCatcher.Name = "AboutCloseCatcher"
 aboutCloseCatcher.Size = UDim2.new(1, 0, 1, 0)
@@ -1262,9 +3116,7 @@ end)
 
 print("[Parte 3] TOGGLE E POPUPS CARREGADOS")
 
---[[
-	CustomPlayerList.lua - Parte 4: ANIMAÇÃO DE TELEPORTE 3D (Portal Master Style)
-]]
+--[[ Parte 4: Animação de Teleporte 3D ]]
 
 local TELEPORT_SOUND_ID = "rbxassetid://130845581077634"
 
@@ -1384,7 +3236,7 @@ local function createRealisticPortal(pos, isFlat, duration)
 	end)
 end
 
--- Teleport To com animacao completa de portal 3D
+-- Teleport To
 local isTeleportCooldown = false
 
 teleportItem.MouseButton1Click:Connect(function()
@@ -1392,7 +3244,6 @@ teleportItem.MouseButton1Click:Connect(function()
 	if isTeleportCooldown then return end
 
 	isTeleportCooldown = true
-
 	local target = currentAboutTarget
 	closeAboutPopup()
 
@@ -1500,9 +3351,7 @@ end)
 
 print("[Parte 4] ANIMAÇÃO DE TELEPORTE CARREGADA")
 
---[[
-	CustomPlayerList.lua - Parte 5: NOTIFICAÇÕES DE AMIZADE
-]]
+--[[ Parte 5: Notificações de Amizade ]]
 
 local NOTIFICATION_SOUND_POSITIVE_ID = "rbxassetid://6518811702"
 local NOTIFICATION_SOUND_NEGATIVE_ID = "rbxassetid://9046485535"
@@ -1641,3 +3490,6 @@ end)
 
 print("[Parte 5] NOTIFICAÇÕES DE AMIZADE CARREGADAS")
 print("=== CUSTOM PLAYER LIST - TUDO CARREGADO ===")
+end)
+
+print("[Combo] SpeedGUI + CustomPlayerList + Anti-AFK carregados com sucesso!")
